@@ -14,8 +14,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          path: inner-repo
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -27,18 +25,19 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Show working directory and files
+        run: |
+          echo "Current working directory: $(pwd)"
+          echo "Repository contents:"
+          ls -R .
+
       - name: Build, tag, and push image to Amazon ECR
         env:
           ECR_REGISTRY: 661539128717.dkr.ecr.us-east-1.amazonaws.com
           IMAGE_NAME: os-hardened-base
         run: |
-          echo "Current workspace: $(pwd)"
-          echo "Listing current and parent dirs"
-          ls -la
-          ls -la ..
-
-          # Build using Dockerfile from the parent directory
-          docker build -t $ECR_REGISTRY/$IMAGE_NAME:latest -f ../Dockerfile ..
+          echo "Building Dockerfile from $(pwd)"
+          docker build -t $ECR_REGISTRY/$IMAGE_NAME:latest -f $GITHUB_WORKSPACE/Dockerfile $GITHUB_WORKSPACE
           docker push $ECR_REGISTRY/$IMAGE_NAME:latest
 
       - name: Confirmation
