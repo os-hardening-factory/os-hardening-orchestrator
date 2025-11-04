@@ -12,8 +12,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          path: inner-repo
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -30,9 +32,15 @@ jobs:
           ECR_REGISTRY: 661539128717.dkr.ecr.us-east-1.amazonaws.com
           IMAGE_NAME: os-hardened-base
         run: |
-          # Navigate to the directory where the Dockerfile exists
-          cd ..
-          
-          echo "Building Docker image from $(pwd)/Dockerfile"
-          
-          docker b
+          echo "Current workspace: $(pwd)"
+          echo "Files in repo root:"
+          ls -la
+          echo "Files in parent directory:"
+          ls -la ..
+
+          # explicitly point Docker to the Dockerfile one level above
+          docker build -t $ECR_REGISTRY/$IMAGE_NAME:latest -f ../Dockerfile ..
+          docker push $ECR_REGISTRY/$IMAGE_NAME:latest
+
+      - name: Confirmation
+        run: echo "✅ Hardened base image built and pushed successfully!"
