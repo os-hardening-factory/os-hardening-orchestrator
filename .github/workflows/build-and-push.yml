@@ -1,0 +1,44 @@
+name: Build and Push Hardened Image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::661539128717:role/GitHubOIDC-ECRPushRole
+          aws-region: us-east-1
+
+      - name: Authenticate to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Debug workspace
+        run: |
+          echo "Workspace path: $GITHUB_WORKSPACE"
+          echo "Listing all files recursively:"
+          ls -R $GITHUB_WORKSPACE
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: 661539128717.dkr.ecr.us-east-1.amazonaws.com
+          IMAGE_NAME: os-hardened-base
+        run: |
+          echo "Building image using Dockerfile from: $GITHUB_WORKSPACE/Dockerfile"
+          docker build -t $ECR_REGISTRY/$IMAGE_NAME:latest -f $GITHUB_WORKSPACE/Dockerfile $GITHUB_WORKSPACE
+          docker push $ECR_REGISTRY/$IMAGE_NAME:latest
+
+      - name: Confirmation
+        run: echo "✅ Hardened base image built and pushed successfully!"
