@@ -33,12 +33,11 @@ jobs:
           IMAGE_NAME: os-hardened-base
         run: |
           echo "Current workspace: $(pwd)"
-          echo "Files in repo root:"
+          echo "Listing current and parent dirs"
           ls -la
-          echo "Files in parent directory:"
           ls -la ..
 
-          # explicitly point Docker to the Dockerfile one level above
+          # Build using Dockerfile from the parent directory
           docker build -t $ECR_REGISTRY/$IMAGE_NAME:latest -f ../Dockerfile ..
           docker push $ECR_REGISTRY/$IMAGE_NAME:latest
 
