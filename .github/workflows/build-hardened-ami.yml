@@ -1,0 +1,59 @@
+name: Build CIS Hardened AMI
+
+on:
+  workflow_dispatch:
+    inputs:
+      os_type:
+        description: 'OS type to build (ubuntu | rhel | amazonlinux)'
+        required: true
+        default: 'ubuntu'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT: os-hardening-factory
+  ENVIRONMENT: dev
+
+jobs:
+  build-hardened-ami:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::661539128717:role/GitHubOIDC-ECRPushRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install Packer
+        uses: hashicorp/setup-packer@v3
+        with:
+          packer_version: latest
+
+      - name: Build CIS hardened AMI
+        run: |
+          cd packer/${{ github.event.inputs.os_type }}
+          echo "🔧 Building hardened AMI for OS: ${{ github.event.inputs.os_type }}"
+          packer init .
+          packer validate \
+            -var "aws_region=${{ env.AWS_REGION }}" \
+            -var "project=${{ env.PROJECT }}" \
+            -var "environment=${{ env.ENVIRONMENT }}" \
+            -var "os_name=${{ github.event.inputs.os_type }}" .
+          packer build \
+            -var "aws_region=${{ env.AWS_REGION }}" \
+            -var "project=${{ env.PROJECT }}" \
+            -var "environment=${{ env.ENVIRONMENT }}" \
+            -var "os_name=${{ github.event.inputs.os_type }}" .
+
+      - name: Upload manifest to artifact store
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packer-${{ github.event.inputs.os_type }}-manifest
+          path: packer/${{ github.event.inputs.os_type }}/manifest.json

@@ -1,0 +1,54 @@
+---
+- name: CIS Baseline Hardening - Amazon Linux 2023
+  hosts: all
+  become: yes
+  tasks:
+    - name: Ensure system packages are updated (essential packages only)
+      ansible.builtin.yum:
+        name:
+          - bash
+          - openssh-server
+          - sudo
+        state: latest
+
+    - name: Disable root SSH login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        line: 'PermitRootLogin no'
+        create: yes
+      notify: Restart SSH
+
+    - name: Enforce password complexity policy
+      ansible.builtin.copy:
+        dest: /etc/security/pwquality.conf
+        content: |
+          minlen = 12
+          dcredit = -1
+          ucredit = -1
+          ocredit = -1
+          lcredit = -1
+        mode: '0644'
+
+    - name: Enable auditd service
+      ansible.builtin.service:
+        name: auditd
+        enabled: yes
+        state: started
+
+    - name: Ensure firewalld is installed and enabled
+      ansible.builtin.yum:
+        name: firewalld
+        state: present
+
+    - name: Enable firewalld service
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.service:
+        name: sshd
+        state: restarted

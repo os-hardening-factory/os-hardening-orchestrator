@@ -1,0 +1,118 @@
+---
+- name: CIS Baseline Hardening - Ubuntu 22.04
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  vars:
+    minimal_packages:
+      - ufw
+      - auditd
+      - openssh-server
+      - libpam-pwquality
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+
+    - name: Reload UFW
+      ansible.builtin.command: ufw reload
+      changed_when: false
+
+  tasks:
+    - name: Ensure minimal required packages are present (fast)
+      ansible.builtin.apt:
+        name: "{{ minimal_packages }}"
+        state: present
+        update_cache: true
+
+    - name: Ensure UFW is enabled
+      ansible.builtin.command: ufw --force enable
+      changed_when: "'Skipping' not in ufw_enable.stdout | default('')"
+      register: ufw_enable
+
+    - name: Allow SSH in UFW
+      ansible.builtin.command: ufw allow OpenSSH
+      register: ufw_allow_ssh
+      changed_when: "'updated' in ufw_allow_ssh.stdout | default('')"
+      notify: Reload UFW
+
+    - name: Disable root SSH login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^\s*PermitRootLogin\b'
+        line: 'PermitRootLogin no'
+        create: no
+        backrefs: false
+      notify: Restart SSH
+
+    - name: Disable SSH password authentication
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^\s*PasswordAuthentication\b'
+        line: 'PasswordAuthentication no'
+        create: no
+        backrefs: false
+      notify: Restart SSH
+
+    - name: Ensure pwquality is enforced in PAM common-password
+      ansible.builtin.lineinfile:
+        path: /etc/pam.d/common-password
+        regexp: '^password\s+requisite\s+pam_pwquality\.so'
+        line: 'password requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1'
+        insertafter: '^password\s+requisite'
+        backup: yes
+
+    - name: Ensure pwquality policy file has strong defaults
+      ansible.builtin.blockinfile:
+        path: /etc/security/pwquality.conf
+        create: yes
+        block: |
+          minlen = 12
+          dcredit = -1
+          ucredit = -1
+          ocredit = -1
+          lcredit = -1
+          retry = 3
+
+    - name: Remove unnecessary network clients (example, fast)
+      ansible.builtin.apt:
+        name:
+          - telnet
+          - rsh-client
+        state: absent
+      ignore_errors: true
+
+    - name: Ensure auditing is enabled at boot
+      ansible.builtin.lineinfile:
+        path: /etc/default/grub
+        regexp: '^\s*GRUB_CMDLINE_LINUX="(.*)"$'
+        line: 'GRUB_CMDLINE_LINUX="\1 audit=1"'
+        backrefs: true
+
+    - name: Update GRUB (only if changed)
+      ansible.builtin.command: update-grub
+      when: ansible_facts.os_family == "Debian"
+      changed_when: true
+
+    - name: Ensure auditd service is enabled and running
+      ansible.builtin.service:
+        name: auditd
+        state: started
+        enabled: true
+
+    - name: Ensure permissions on /etc/passwd are correct
+      ansible.builtin.file:
+        path: /etc/passwd
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Ensure permissions on /etc/shadow are correct
+      ansible.builtin.file:
+        path: /etc/shadow
+        owner: root
+        group: shadow
+        mode: '0640'

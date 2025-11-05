@@ -1,0 +1,95 @@
+---
+- name: CIS Baseline Hardening - EKS (Amazon Linux 2)
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Wait for yum lock to be released
+      shell: |
+        retries=10
+        while fuser /var/run/yum.pid >/dev/null 2>&1; do
+          echo "⏳ Waiting for yum lock to be released..."
+          sleep 15
+          retries=$((retries - 1))
+          if [ $retries -le 0 ]; then
+            echo "❌ Timeout waiting for yum lock."
+            exit 1
+          fi
+        done
+      register: yum_lock
+      changed_when: false
+
+    - name: Enable Python 3.9 via amazon-linux-extras
+      ansible.builtin.shell: amazon-linux-extras enable python3.9 || true
+      args:
+        warn: false
+
+    - name: Install Python 3.9 and pip
+      ansible.builtin.yum:
+        name:
+          - python3.9
+          - python3-pip
+        state: present
+      retries: 3
+      delay: 10
+      register: python_install
+      until: python_install is succeeded
+
+    - name: Set python3 alternative to python3.9
+      ansible.builtin.command: alternatives --set python3 /usr/bin/python3.9
+      ignore_errors: yes
+
+    - name: Upgrade pip and ansible libraries
+      ansible.builtin.pip:
+        name:
+          - pip
+          - setuptools
+          - ansible
+        state: latest
+      environment:
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Update essential system packages
+      ansible.builtin.yum:
+        name:
+          - openssh-server
+          - sudo
+        state: latest
+
+    - name: Disable root SSH login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        line: 'PermitRootLogin no'
+      notify: Restart SSH
+
+    - name: Disable password-based SSH authentication
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: Restart SSH
+
+    - name: Enable auditing
+      ansible.builtin.yum:
+        name: audit
+        state: present
+
+    - name: Ensure auditd service is enabled and running
+      ansible.builtin.service:
+        name: auditd
+        enabled: yes
+        state: started
+
+    - name: Set secure permissions on shadow file
+      ansible.builtin.file:
+        path: /etc/shadow
+        owner: root
+        group: root
+        mode: '0000'
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.service:
+        name: sshd
+        state: restarted

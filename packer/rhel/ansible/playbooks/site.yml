@@ -1,0 +1,85 @@
+---
+- name: CIS Baseline Hardening - RHEL 9
+  hosts: all
+  become: true
+  gather_facts: yes
+  any_errors_fatal: true
+
+  vars:
+    ansible_connection: ssh
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+    ansible_ssh_retries: 3
+    ansible_ssh_timeout: 30
+
+  tasks:
+    - name: Ensure essential system packages are up to date (optimized for speed)
+      ansible.builtin.yum:
+        name:
+          - openssl
+          - sudo
+          - bash
+        state: latest
+      retries: 2
+      delay: 5
+      register: update_result
+      until: update_result is succeeded
+      tags: patching
+
+    - name: Disable root SSH login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        line: 'PermitRootLogin no'
+        create: yes
+      notify: Restart SSH
+
+    - name: Ensure password authentication is disabled for SSH
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        create: yes
+      notify: Restart SSH
+
+    - name: Enforce password complexity policy
+      ansible.builtin.copy:
+        dest: /etc/security/pwquality.conf
+        content: |
+          minlen = 12
+          minclass = 3
+          maxrepeat = 3
+          maxsequence = 3
+          retry = 3
+        mode: '0644'
+
+    - name: Install and enable auditd
+      ansible.builtin.yum:
+        name: audit
+        state: present
+
+    - name: Enable auditd service
+      ansible.builtin.service:
+        name: auditd
+        state: started
+        enabled: yes
+
+    - name: Ensure firewalld is installed
+      ansible.builtin.yum:
+        name: firewalld
+        state: present
+
+    - name: Ensure firewalld is enabled and running
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: yes
+
+    - name: Clean yum cache
+      ansible.builtin.command: yum clean all
+      ignore_errors: yes
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.service:
+        name: sshd
+        state: restarted

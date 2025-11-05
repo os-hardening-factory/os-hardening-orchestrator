@@ -1,0 +1,23 @@
+{
+  "builds": [
+    {
+      "name": "amazonlinux_cis",
+      "builder_type": "amazon-ebs",
+      "build_time": 1762370824,
+      "files": null,
+      "artifact_id": "us-east-1:ami-0a7b73f56dc2e14ee",
+      "packer_run_uuid": "991590d1-d7a6-2d39-f1be-bef625d2047f",
+      "custom_data": null
+    },
+    {
+      "name": "amazonlinux_cis",
+      "builder_type": "amazon-ebs",
+      "build_time": 1762371575,
+      "files": null,
+      "artifact_id": "us-east-1:ami-0ca25c9f62f07ec53",
+      "packer_run_uuid": "cf7cb456-64a6-db5a-98ef-4a7133c2bbe8",
+      "custom_data": null
+    }
+  ],
+  "last_run_uuid": "cf7cb456-64a6-db5a-98ef-4a7133c2bbe8"
+}
