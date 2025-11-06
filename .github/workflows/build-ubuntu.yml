@@ -15,6 +15,7 @@ jobs:
       OS_VERSION: "22.04"
       CIS_VERSION: "1.4"
       AWS_REGION: "ap-south-1"
+      PACKER_VERSION: "1.11.2"
 
     steps:
       - name: 🧾 Checkout repository
@@ -26,78 +27,160 @@ jobs:
           role-to-assume: arn:aws:iam::661539128717:role/GitHubActionsFactoryRole
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: ✅ Verify AWS access
+        run: |
+          echo "🔍 Verifying AWS credentials..."
+          aws sts get-caller-identity
+          echo "✅ AWS credentials configured successfully"
+
       - name: 🔧 Install dependencies (no containerd conflicts)
         run: |
           set -e
-          echo "🔧 Installing safe dependencies..."
+          echo "🔧 Installing dependencies without containerd conflicts..."
 
-          # Base tools only
+          # Update package lists
           sudo apt-get update -y
-          sudo apt-get install -y wget curl unzip python3-pip gpg lsb-release jq
 
-          # ✅ Install Packer via binary (no apt)
-          echo "📦 Installing Packer binary..."
-          PACKER_VERSION="1.14.2"
-          curl -fsSL https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_linux_amd64.zip -o packer.zip
+          # Install base tools only (no Docker/containerd packages)
+          sudo apt-get install -y \
+            wget \
+            curl \
+            unzip \
+            python3-pip \
+            gpg \
+            lsb-release \
+            jq \
+            software-properties-common
+
+          echo "✅ Base dependencies installed"
+
+      - name: 📦 Install Packer (binary method)
+        run: |
+          echo "📦 Installing Packer ${PACKER_VERSION}..."
+          
+          # Download and install Packer binary
+          curl -fsSL "https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_linux_amd64.zip" -o packer.zip
           sudo unzip -o packer.zip -d /usr/local/bin/
           rm -f packer.zip
+          
+          # Verify installation
           packer version
+          echo "✅ Packer installed successfully"
 
-          # ✅ Use runner’s preinstalled Docker
-          echo "🐋 Verifying Docker environment..."
+      - name: 🐋 Verify Docker environment
+        run: |
+          echo "🐋 Checking Docker availability..."
+          
+          # GitHub runners have Docker pre-installed
           docker --version || (echo "❌ Docker not found" && exit 1)
           docker info || (echo "❌ Docker daemon unavailable" && exit 1)
+          
+          echo "✅ Docker is ready"
 
-          # ✅ Trivy binary install (no apt or containerd)
-          echo "🔍 Installing Trivy binary..."
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
-          sudo mv trivy /usr/local/bin/trivy
+      - name: 🔍 Install Trivy scanner
+        run: |
+          echo "🔍 Installing Trivy security scanner..."
+          
+          # Install Trivy using official script (no apt/containerd dependency)
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /tmp
+          sudo mv /tmp/trivy /usr/local/bin/trivy
+          
+          # Verify installation
           trivy --version
+          echo "✅ Trivy installed successfully"
 
-          # ✅ Python libs
+      - name: 🐍 Install Python dependencies
+        run: |
+          echo "🐍 Installing Python libraries..."
+          pip3 install --upgrade pip
           pip3 install boto3 PyGithub
-
-          echo "✅ Dependencies installed safely."
+          echo "✅ Python dependencies installed"
 
       - name: 🧩 Initialize and validate Packer
         run: |
+          echo "🧩 Initializing Packer configuration..."
           packer init packer/ubuntu
+          
+          echo "🧩 Validating Packer template..."
           packer validate packer/ubuntu
+          
+          echo "✅ Packer configuration is valid"
 
       - name: 🏗️ Build hardened Ubuntu image
         run: |
           TIMESTAMP=$(date +%Y%m%d)
           TAG="${{ env.OS_NAME }}-${{ env.OS_VERSION }}-cis${{ env.CIS_VERSION }}-hardening-${TIMESTAMP}"
 
-          echo "🚀 Building image: $TAG"
+          echo "🚀 Building hardened image: $TAG"
           packer build \
             -var "local_tag=latest" \
             -var "image_name=${TAG}" \
             -var "base_image=ubuntu:22.04" \
             packer/ubuntu
 
+          echo "✅ Image built successfully: ${TAG}:latest"
+
       - name: 🔍 Scan image using Trivy
         run: |
           TIMESTAMP=$(date +%Y%m%d)
           TAG="${{ env.OS_NAME }}-${{ env.OS_VERSION }}-cis${{ env.CIS_VERSION }}-hardening-${TIMESTAMP}"
 
-          echo "🔍 Scanning image: ${TAG}:latest"
+          echo "🔍 Running security scan on: ${TAG}:latest"
           mkdir -p reports
-          trivy image "${TAG}:latest" --format json -o reports/trivy-${TAG}.json || true
+          
+          # Run Trivy scan (continue on error to allow report upload)
+          trivy image "${TAG}:latest" \
+            --format json \
+            -o reports/trivy-${TAG}.json \
+            --severity HIGH,CRITICAL || true
+
+          echo "✅ Security scan completed"
+
+      - name: 📊 Upload scan reports as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: reports/
+          retention-days: 30
 
       - name: ☁️ Upload compliance report to S3
+        if: success()
         run: |
+          echo "☁️ Uploading compliance reports to S3..."
           python3 tools/upload_to_s3_and_trigger_glue.py
         env:
           AWS_REGION: ${{ env.AWS_REGION }}
 
       - name: 🪶 Update vendor changelog
+        if: success()
         run: |
+          TIMESTAMP=$(date +%Y%m%d)
+          
+          echo "🪶 Updating vendor changelog..."
           python3 tools/dispatch_to_vendor_repos.py \
             --vendor "${{ env.OS_NAME }}" \
             --cis_profile "cis${{ env.CIS_VERSION }}" \
             --version "v1.0.0" \
-            --build_date "$(date +%Y%m%d)" \
+            --build_date "${TIMESTAMP}" \
             --summary "CIS ${{ env.CIS_VERSION }} compliance and OS security patches"
+          
+          echo "✅ Vendor changelog updated"
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: 📝 Build Summary
+        if: always()
+        run: |
+          echo "## 🎯 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **OS**: ${{ env.OS_NAME }} ${{ env.OS_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **CIS Profile**: ${{ env.CIS_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Date**: $(date +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Packer Version**: ${{ env.PACKER_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -d "reports" ]; then
+            echo "### 📊 Security Reports" >> $GITHUB_STEP_SUMMARY
+            echo "Check the artifacts section for detailed Trivy scan results." >> $GITHUB_STEP_SUMMARY
+          fi
