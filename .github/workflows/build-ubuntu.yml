@@ -2,130 +2,73 @@ name: 🐧 Ubuntu Hardened Image Build
 
 on:
   workflow_dispatch:
-  workflow_call:
-
-concurrency:
-  group: "ubuntu-${{ github.ref }}"
-  cancel-in-progress: true
-
-permissions:
-  contents: read
-  id-token: write           # OIDC to AWS
-  security-events: write    # for SARIF upload
-
-env:
-  VENDOR: ubuntu
-  # Cache dirs
-  PACKER_PLUGIN_DIR: /home/runner/.config/packer/plugins
-  TRIVY_CACHE_DIR: /home/runner/.cache/trivy
-  # Deterministic tag for traceability
-  TAG: ubuntu-hardened:${{ github.run_id }}-${{ github.sha }}
 
 jobs:
-  build:
+  build-ubuntu:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    permissions:
+      id-token: write
+      contents: write
 
     steps:
-      - name: 🧾 Checkout
+      - name: 🧾 Checkout orchestrator repo
         uses: actions/checkout@v4
 
-      - name: 🔐 Configure AWS via OIDC
+      - name: 🔐 Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::661539128717:role/GitHubActionsFactoryRole
           aws-region: ap-south-1
 
-      - name: 💾 Cache Packer plugins
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.PACKER_PLUGIN_DIR }}
-          key: packer-plugins-${{ runner.os }}-${{ hashFiles('packer/ubuntu/template.pkr.hcl','packer/ubuntu/variables.pkr.hcl') }}
-
-      - name: 💾 Cache Trivy DB
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.TRIVY_CACHE_DIR }}
-          key: trivy-db-${{ runner.os }}-v1
-
-      - name: 🔧 Install Packer + Trivy + Python deps
+      - name: 🔧 Install dependencies
         run: |
-          set -eux
           sudo apt-get update -y
-          sudo apt-get install -y wget curl unzip python3-pip gpg
-          # Packer (official repo)
+          sudo apt-get install -y wget curl unzip python3-pip software-properties-common gpg
           wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com noble main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
           sudo apt-get update && sudo apt-get install -y packer
-          # Trivy (script; Ubuntu 24.04 safe)
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
-          trivy --version
+          sudo apt-get install -y docker.io
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh
           pip3 install boto3 PyGithub
 
-      - name: 🧩 Install required Packer plugins (retry)
+      - name: 🧾 Verify Ansible Files
         run: |
-          set -eux
-          for p in github.com/hashicorp/docker github.com/hashicorp/ansible; do
-            for i in 1 2 3; do
-              if packer plugins install "$p"; then break; fi
-              sleep 10
-            done
-          done
-          packer plugins installed || true
-
-      - name: 🧾 Verify Ansible files exist
-        run: |
-          ls -R packer/ubuntu/ansible
+          echo "Verifying Ansible files for Ubuntu..."
+          ls -R packer/ubuntu/ansible || (echo "❌ Missing Ansible files!" && exit 1)
 
       - name: 🏗️ Build hardened Ubuntu image
         env:
           PACKER_LOG: "1"
         run: |
+          echo "🚀 Building Ubuntu CIS 1.4 Hardened Image..."
           packer init packer/ubuntu
           packer validate packer/ubuntu
-          packer build -var "local_tag=${TAG}" packer/ubuntu
+          packer build \
+            -var "os_name=ubuntu" \
+            -var "os_version=22.04" \
+            -var "cis_version=1.4" \
+            -var "timestamp=$(date +%Y%m%d)" \
+            packer/ubuntu
 
-      - name: 🗃️ Save Docker image (provenance)
+      - name: 🔍 Scan image using Trivy
         run: |
-          docker image inspect ${TAG}
-          docker save ${TAG} -o ubuntu-hardened-${{ github.run_id }}.tar
+          echo "🔍 Scanning hardened image..."
+          IMAGE_TAG=$(date +%Y%m%d)
+          IMAGE_NAME="ubuntu-22.04-cis1.4-hardening-${IMAGE_TAG}"
+          trivy image ${IMAGE_NAME}:latest -f json -o reports/trivy-${IMAGE_NAME}.json || true
 
-      - name: 🔍 Trivy scan (JSON + SARIF)
+      - name: ☁️ Upload compliance report to S3
         run: |
-          mkdir -p reports
-          trivy image --cache-dir "${{ env.TRIVY_CACHE_DIR }}" --timeout 10m ${TAG} -f json  -o reports/trivy-ubuntu.json || true
-          trivy image --cache-dir "${{ env.TRIVY_CACHE_DIR }}" --timeout 10m ${TAG} -f sarif -o reports/trivy-ubuntu.sarif || true
-
-      - name: 📤 Upload reports + image as artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ubuntu-artifacts-${{ github.run_id }}
-          path: |
-            reports/trivy-ubuntu.json
-            reports/trivy-ubuntu.sarif
-            ubuntu-hardened-${{ github.run_id }}.tar
-
-      - name: 🛡️ Upload SARIF to Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: reports/trivy-ubuntu.sarif
-
-      - name: ☁️ Upload compliance to S3 + trigger Glue
+          echo "☁️ Uploading compliance report..."
+          python3 tools/upload_to_s3_and_trigger_glue.py
         env:
           AWS_REGION: ap-south-1
-        run: |
-          python3 tools/upload_to_s3_and_trigger_glue.py
 
-      - name: 🧹 Cleanup runner
-        if: always()
+      - name: ✅ Summary
         run: |
-          docker image rm ${TAG} || true
-          docker system prune -af || true
-
-      - name: 🧾 Summary
-        if: always()
-        run: |
-          echo "### Ubuntu Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Image Tag: \`${TAG}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Trivy JSON: \`reports/trivy-ubuntu.json\` (artifact)" >> $GITHUB_STEP_SUMMARY
-          echo "- SARIF uploaded to Security tab" >> $GITHUB_STEP_SUMMARY
+          IMAGE_TAG=$(date +%Y%m%d)
+          IMAGE_NAME="ubuntu-22.04-cis1.4-hardening-${IMAGE_TAG}"
+          echo "### ✅ Ubuntu Hardened Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Image Name: \`${IMAGE_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- CIS Version: 1.4" >> $GITHUB_STEP_SUMMARY
+          echo "- Date: $(date)" >> $GITHUB_STEP_SUMMARY
