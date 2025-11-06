@@ -1,39 +1,41 @@
 packer {
+  required_version = ">= 1.11.0"
+
   required_plugins {
-    docker = { version = ">=1.0.8", source = "github.com/hashicorp/docker" }
-    ansible = { version = ">=1.1.0", source = "github.com/hashicorp/ansible" }
+    docker  = { version = ">= 1.1.2", source = "github.com/hashicorp/docker" }
+    ansible = { version = ">= 1.1.4", source = "github.com/hashicorp/ansible" }
   }
 }
 
-source "docker" "rhel" {
-  image  = "rhel:latest"
+# Use Red Hat UBI 9 public image
+source "docker" "ubi9" {
+  image  = var.base_image
   commit = true
+  changes = [
+    "LABEL os-hardening=true",
+    "ENV LANG=en_US.UTF-8"
+  ]
 }
 
 build {
-  name    = "rhel-hardened"
-  sources = ["source.docker.rhel"]
+  name    = var.image_name
+  sources = ["source.docker.ubi9"]
 
+  # Install Python and SSH dependencies
   provisioner "shell" {
     inline = [
-      "which dnf >/dev/null 2>&1 && dnf install -y python3 sudo || yum install -y python3 sudo",
-      "ln -sf /usr/bin/python3 /usr/bin/python || true"
+      "microdnf install -y python3 git openssh-clients sudo && microdnf clean all"
     ]
   }
 
-  provisioner "ansible" {
-    playbook_file    = "./packer/rhel/ansible/playbook.yml"
-    extra_arguments  = ["-e", "ansible_python_interpreter=/usr/bin/python3"]
+  # Run Ansible playbook inside image
+  provisioner "ansible-local" {
+    playbook_file = var.ansible_playbook
   }
 
+  # Tag final image
   post-processor "docker-tag" {
-    repository = "661539128717.dkr.ecr.ap-south-1.amazonaws.com/hardened-rhel"
+    repository = var.image_name
     tags       = [var.local_tag]
   }
-}
-
-variable "local_tag" {
-  type        = string
-  description = "Tag for the hardened image version"
-  default     = "latest"
 }
