@@ -1,5 +1,6 @@
 packer {
   required_version = ">= 1.11.0"
+
   required_plugins {
     docker  = { version = ">= 1.1.2", source = "github.com/hashicorp/docker" }
     ansible = { version = ">= 1.1.4", source = "github.com/hashicorp/ansible" }
@@ -9,6 +10,10 @@ packer {
 source "docker" "ubuntu" {
   image  = var.base_image
   commit = true
+  changes = [
+    "LABEL os-hardening=true",
+    "ENV DEBIAN_FRONTEND=noninteractive"
+  ]
 }
 
 build {
@@ -18,7 +23,7 @@ build {
   provisioner "shell" {
     inline = [
       "apt-get update -y",
-      "apt-get install -y python3 python3-apt git curl openssh-client",
+      "apt-get install -y python3 python3-apt git curl sudo",
       "rm -rf /var/lib/apt/lists/*"
     ]
   }
