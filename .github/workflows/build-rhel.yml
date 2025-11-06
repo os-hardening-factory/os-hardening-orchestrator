@@ -50,29 +50,32 @@ jobs:
           mkdir -p ~/.config/packer/plugins/github.com/hashicorp/docker
           mkdir -p ~/.config/packer/plugins/github.com/hashicorp/ansible
 
-      # ✅ Offline exact plugin install with the filenames Packer expects
       - name: 🧩 Install Packer plugins offline (exact versions)
         run: |
           set -e
           D_DIR="$HOME/.config/packer/plugins/github.com/hashicorp/docker"
           A_DIR="$HOME/.config/packer/plugins/github.com/hashicorp/ansible"
 
-          # Docker plugin v1.1.2
+          mkdir -p "$D_DIR" "$A_DIR"
+
+          echo "📦 Installing docker plugin v1.1.2..."
           curl -fsSL -o /tmp/pp-docker.zip https://releases.hashicorp.com/packer-plugin-docker/1.1.2/packer-plugin-docker_1.1.2_linux_amd64.zip
           unzip -o /tmp/pp-docker.zip -d /tmp/
-          # Move to EXACT name Packer looks for:
-          # packer-plugin-docker_v1.1.2_x5.0_linux_amd64
-          mv /tmp/packer-plugin-docker "$D_DIR/packer-plugin-docker_v1.1.2_x5.0_linux_amd64"
+          # Detect actual unpacked file dynamically
+          DOCKER_BIN=$(find /tmp -maxdepth 1 -type f -name "packer-plugin-docker*" | head -n1)
+          mv "$DOCKER_BIN" "$D_DIR/packer-plugin-docker_v1.1.2_x5.0_linux_amd64"
           chmod +x "$D_DIR/packer-plugin-docker_v1.1.2_x5.0_linux_amd64"
 
-          # Ansible plugin v1.1.4
+          echo "📦 Installing ansible plugin v1.1.4..."
           curl -fsSL -o /tmp/pp-ansible.zip https://releases.hashicorp.com/packer-plugin-ansible/1.1.4/packer-plugin-ansible_1.1.4_linux_amd64.zip
           unzip -o /tmp/pp-ansible.zip -d /tmp/
-          mv /tmp/packer-plugin-ansible "$A_DIR/packer-plugin-ansible_v1.1.4_x5.0_linux_amd64"
+          ANSIBLE_BIN=$(find /tmp -maxdepth 1 -type f -name "packer-plugin-ansible*" | head -n1)
+          mv "$ANSIBLE_BIN" "$A_DIR/packer-plugin-ansible_v1.1.4_x5.0_linux_amd64"
           chmod +x "$A_DIR/packer-plugin-ansible_v1.1.4_x5.0_linux_amd64"
 
-          echo "✅ Offline plugins placed:"
-          ls -l "$D_DIR" "$A_DIR"
+          echo "✅ Plugins placed successfully:"
+          ls -lh "$D_DIR" "$A_DIR"
+
 
       - name: 🧩 Initialize and validate RHEL Packer template
         run: |
