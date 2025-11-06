@@ -34,15 +34,35 @@ build {
   # -------------------------------------------------------------------------
   # Step 1: Install Python and Ansible inside the container
   # -------------------------------------------------------------------------
-  provisioner "shell" {
-    inline = [
-      "if command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v microdnf >/dev/null 2>&1; then PKG_MGR=microdnf; else echo '❌ No supported package manager found' && exit 1; fi",
-      "echo '📦 Using package manager:' $PKG_MGR",
-      "$PKG_MGR -y update || true",
-      "$PKG_MGR -y install python3 git openssh-clients tzdata ansible",
-      "$PKG_MGR clean all"
-    ]
-  }
+provisioner "shell" {
+  inline = [
+    "set -euxo pipefail",
+    "echo '📦 Detecting package manager...'",
+
+    # Detect dnf or microdnf
+    "if command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v microdnf >/dev/null 2>&1; then PKG_MGR=microdnf; else echo '❌ No supported package manager found' && exit 1; fi",
+    "echo '✅ Using package manager:' $PKG_MGR",
+
+    # Update repositories
+    "$PKG_MGR -y update --refresh || true",
+
+    # Fix for curl-minimal conflicts
+    "echo '🧹 Handling curl-minimal conflicts...'",
+    "if $PKG_MGR list installed curl-minimal >/dev/null 2>&1; then $PKG_MGR -y remove curl-minimal || true; fi",
+
+    # Install Python and dependencies safely
+    "echo '📦 Installing Python, Pip, and utilities...'",
+    "$PKG_MGR install -y --allowerasing python3 python3-pip git sudo which tzdata openssh-clients || $PKG_MGR install -y --nobest python3 python3-pip git sudo which tzdata openssh-clients",
+
+    # Install Ansible via pip
+    "echo '🐍 Installing Ansible via pip (bypassing subscription)...'",
+    "pip3 install --no-cache-dir ansible==8.7.0",
+    "ansible --version || echo '⚠️ Warning: Ansible version check failed, continuing...'",
+
+    "echo '✅ System prepared for hardening execution.'"
+  ]
+}
+
 
 
 

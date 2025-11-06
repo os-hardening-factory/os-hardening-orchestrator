@@ -1,59 +1,122 @@
 ---
-# 🧩 Basic RHEL CIS 1.5 Hardening Tasks
+# ============================================================
+# RHEL 9 CIS Baseline - Main Task File
+# ============================================================
 
-- name: Ensure system is updated
-  yum:
-    name: '*'
-    state: latest
-  register: yum_update
+- name: Refresh DNF metadata cache
+  ansible.builtin.command: dnf -y makecache
+  register: cis_refresh_result
+  changed_when: false
+  tags:
+    - update
+    - repo
+
+# ============================================================
+# 1. System Update and Package Management
+# ============================================================
+
+- name: Ensure system packages are updated safely (container-safe)
+  ansible.builtin.command: >
+    dnf -y --nobest --skip-broken upgrade
+  register: cis_update_result
+  changed_when: "'Complete!' in cis_update_result.stdout"
+  failed_when: cis_update_result.rc not in [0, 100]
   ignore_errors: true
+  tags:
+    - update
+    - security
 
-- name: Display update summary
-  debug:
-    var: yum_update
+- name: Ensure essential packages are installed safely (handle curl-minimal conflict)
+  ansible.builtin.shell: |
+    dnf install -y --nobest --allowerasing bash wget vim net-tools || true
+    if rpm -q curl-minimal; then
+      echo "✅ curl-minimal already installed, skipping curl."
+    else
+      dnf install -y --nobest --allowerasing curl || true
+    fi
+  args:
+    warn: false
+  register: essential_pkg_result
+  changed_when: "'Complete!' in essential_pkg_result.stdout"
+  failed_when: false
 
-- name: Ensure required security packages are installed
-  yum:
-    name:
-      - sudo
-      - curl
-      - wget
-      - vim
-      - firewalld
-      - rsyslog
-      - audit
-    state: present
 
-- name: Enable and start essential services
-  service:
-    name: "{{ item }}"
-    state: started
-    enabled: true
-  loop:
-    - firewalld
-    - rsyslog
-    - auditd
-
-- name: Set timezone to UTC
-  command: timedatectl set-timezone UTC
+# ============================================================
+# 2. Security Configurations
+# ============================================================
 
 - name: Disable SSH root login
-  lineinfile:
+  ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
     regexp: '^#?PermitRootLogin'
     line: 'PermitRootLogin no'
-    create: yes
+    mode: '0644'
+    create: true
   notify: Restart SSH
+  tags:
+    - ssh
+    - security
 
 - name: Enforce password policy
-  lineinfile:
+  ansible.builtin.lineinfile:
     path: /etc/security/pwquality.conf
     regexp: '^#?minlen'
     line: 'minlen = 12'
-    create: yes
+    mode: '0644'
+    create: true
+  tags:
+    - password
+    - cis
 
-handlers:
-  - name: Restart SSH
-    service:
-      name: sshd
-      state: restarted
+# ============================================================
+# 3. Timezone and Localization
+# ============================================================
+
+- name: Set system timezone to UTC (container-safe)
+  ansible.builtin.file:
+    path: /etc/localtime
+    src: /usr/share/zoneinfo/UTC
+    state: link
+  tags:
+    - timezone
+    - compliance
+
+# ============================================================
+# 4. Service Hardening
+# ============================================================
+
+- name: Disable unnecessary services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - avahi-daemon
+    - cups
+    - nfs
+    - rpcbind
+  ignore_errors: true
+  tags:
+    - services
+    - hardening
+
+# ============================================================
+# 5. Log Audit Configuration
+# ============================================================
+
+- name: Ensure rsyslog is installed and running
+  ansible.builtin.package:
+    name: rsyslog
+    state: present
+  tags:
+    - logging
+    - audit
+
+- name: Ensure rsyslog service is enabled
+  ansible.builtin.systemd:
+    name: rsyslog
+    enabled: true
+    state: started
+  tags:
+    - logging
+    - audit

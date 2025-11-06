@@ -1,9 +1,42 @@
 ---
-- name: Ensure core utilities are installed
-  package:
-    name: [bash, vim, curl, wget, net-tools]
+- name: Ensure core utilities are installed (with conflict handling)
+  ansible.builtin.dnf:
+    name:
+      - bash
+      - vim
+      - curl
+      - wget
+      - net-tools
     state: present
+    allowerasing: yes
+    skip_broken: yes
+  register: pkg_result
+  retries: 3
+  delay: 10
+  until: pkg_result is succeeded
+  tags: packages
 
-- name: Set system timezone to UTC
-  command: timedatectl set-timezone UTC
-  when: ansible_facts['os_family'] == 'RedHat'
+- name: Set system timezone to UTC (container-safe)
+  ansible.builtin.file:
+    src: /usr/share/zoneinfo/UTC
+    dest: /etc/localtime
+    state: link
+  tags: timezone
+
+- name: Ensure TZ environment variable is set to UTC
+  ansible.builtin.lineinfile:
+    path: /etc/environment
+    regexp: '^TZ='
+    line: 'TZ=UTC'
+    create: yes
+  tags: timezone
+
+- name: Check for locked RPM database or package conflicts
+  ansible.builtin.shell: |
+    if fuser /var/lib/rpm/.rpm.lock >/dev/null 2>&1; then
+      echo "⚠️ RPM database locked. Retrying..."
+      sleep 5
+    fi
+  retries: 3
+  delay: 10
+  changed_when: false
