@@ -5,27 +5,32 @@ packer {
       source  = "github.com/hashicorp/docker"
     }
     ansible = {
-      version = ">=1.0.3"
+      version = ">=1.1.0"
       source  = "github.com/hashicorp/ansible"
     }
   }
 }
 
-source "docker" "${os}" {
-  image  = "${os}:latest"
+variable "local_tag" {
+  type = string
+  default = "amazonlinux-hardened:latest"
+}
+
+source "docker" "amazonlinux" {
+  image  = "amazonlinux:latest"
   commit = true
 }
 
 build {
-  name    = "${os}-hardened"
-  sources = ["source.docker.${os}"]
+  name    = "amazonlinux-hardened"
+  sources = ["source.docker.amazonlinux"]
 
   provisioner "ansible" {
-    playbook_file = "./packer/${os}/ansible/playbook.yml"
+    playbook_file = "./packer/amazonlinux/ansible/playbook.yml"
   }
 
   post-processor "docker-tag" {
-    repository = "661539128717.dkr.ecr.ap-south-1.amazonaws.com/hardened-${os}"
-    tag        = "v1.0.0-cis1.4-$(date +%Y%m%d)"
+    repository = "661539128717.dkr.ecr.ap-south-1.amazonaws.com/hardened-amazonlinux"
+    tag        = "v1.0.0-cis1.4-20251106"
   }
 }

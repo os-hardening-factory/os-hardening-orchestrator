@@ -5,27 +5,32 @@ packer {
       source  = "github.com/hashicorp/docker"
     }
     ansible = {
-      version = ">=1.0.3"
+      version = ">=1.1.0"
       source  = "github.com/hashicorp/ansible"
     }
   }
 }
 
-source "docker" "${os}" {
-  image  = "${os}:latest"
+variable "local_tag" {
+  type = string
+  default = "rhel-hardened:latest"
+}
+
+source "docker" "rhel" {
+  image  = "rhel:latest"
   commit = true
 }
 
 build {
-  name    = "${os}-hardened"
-  sources = ["source.docker.${os}"]
+  name    = "rhel-hardened"
+  sources = ["source.docker.rhel"]
 
   provisioner "ansible" {
-    playbook_file = "./packer/${os}/ansible/playbook.yml"
+    playbook_file = "./packer/rhel/ansible/playbook.yml"
   }
 
   post-processor "docker-tag" {
-    repository = "661539128717.dkr.ecr.ap-south-1.amazonaws.com/hardened-${os}"
-    tag        = "v1.0.0-cis1.4-$(date +%Y%m%d)"
+    repository = "661539128717.dkr.ecr.ap-south-1.amazonaws.com/hardened-rhel"
+    tag        = "v1.0.0-cis1.4-20251106"
   }
 }

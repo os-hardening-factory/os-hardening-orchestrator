@@ -30,7 +30,6 @@ jobs:
 
       - name: Install dependencies
         run: |
-          echo "🔧 Installing dependencies..."
           sudo apt-get update -y
           sudo apt-get install -y wget curl gpg python3-pip software-properties-common
           wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg >/dev/null
@@ -38,11 +37,11 @@ jobs:
           sudo apt-get update -y && sudo apt-get install -y packer
           pip3 install boto3 PyGithub
 
-      - name: 🏗️ Initialize and build hardened image (with Ansible plugin)
+      - name: 🏗️ Initialize and build hardened image
         run: |
           echo "🚀 Building hardened image for ${{ matrix.os_type }}..."
           echo "📦 Installing required Packer plugins..."
-          packer plugins install github.com/hashicorp/ansible
+          packer plugins install github.com/hashicorp/packer-plugin-ansible
           packer plugins install github.com/hashicorp/docker
 
           echo "⚙️ Initializing Packer..."
@@ -50,25 +49,3 @@ jobs:
 
           echo "🏗️ Building ${{ matrix.os_type }} hardened image..."
           packer build -var "local_tag=${{ matrix.os_type }}-hardened:v1.0.0-cis1.4-$(date +%Y%m%d)-${GITHUB_SHA::7}" packer/${{ matrix.os_type }}
-
-      - name: Scan image using Trivy
-        run: |
-          echo "🔍 Scanning image with Trivy..."
-          trivy image 661539128717.dkr.ecr.ap-south-1.amazonaws.com/hardened-${{ matrix.os_type }}:latest \
-            -f json -o reports/trivy-${{ matrix.os_type }}.json || true
-
-      - name: Upload compliance report to S3
-        run: python3 tools/upload_to_s3_and_trigger_glue.py
-        env:
-          AWS_REGION: ap-south-1
-
-      - name: Update vendor repo changelog + release
-        run: |
-          python3 tools/dispatch_to_vendor_repos.py \
-            --vendor ${{ matrix.os_type }} \
-            --cis_profile "cis1.4" \
-            --version "v1.0.0" \
-            --build_date "$(date +%Y%m%d)" \
-            --summary "CIS 1.4 compliance, CVE patches, and OS security updates"
-        env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
