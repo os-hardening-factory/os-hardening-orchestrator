@@ -1,0 +1,66 @@
+name: 🚀 Promote Hardened Image to Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      vendor:
+        description: "OS vendor (e.g., ubuntu, rhel, amazonlinux)"
+        required: true
+        default: "ubuntu"
+      source_tag:
+        description: "Existing tag to promote (e.g., ubuntu-22.04-intuit-1)"
+        required: true
+      target_tag:
+        description: "New promotion tag (e.g., ubuntu-22.04-intuit-stable)"
+        required: true
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      AWS_REGION: ap-south-1
+      ACCOUNT_ID: "661539128717"
+
+    steps:
+      - name: 🔐 Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::661539128717:role/GitHubActionsFactoryRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🧾 Log input parameters
+        run: |
+          echo "Vendor        : ${{ github.event.inputs.vendor }}"
+          echo "Source tag    : ${{ github.event.inputs.source_tag }}"
+          echo "Target tag    : ${{ github.event.inputs.target_tag }}"
+
+      - name: 🧱 Pull, retag, and push image
+        run: |
+          VENDOR=${{ github.event.inputs.vendor }}
+          SRC=${{ github.event.inputs.source_tag }}
+          DST=${{ github.event.inputs.target_tag }}
+
+          REPO="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/hardened-${VENDOR}"
+
+          echo "🔹 Pulling image: ${REPO}:${SRC}"
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} \
+            | docker login --username AWS --password-stdin ${REPO}
+
+          docker pull ${REPO}:${SRC}
+          docker tag  ${REPO}:${SRC} ${REPO}:${DST}
+          docker push ${REPO}:${DST}
+
+          echo "✅ Promoted ${REPO}:${SRC} → ${REPO}:${DST}"
+
+      - name: 🧾 Record promotion details
+        run: |
+          echo "timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+          echo "Promoted image details:"
+          echo "  Vendor     : ${{ github.event.inputs.vendor }}"
+          echo "  Source Tag : ${{ github.event.inputs.source_tag }}"
+          echo "  Target Tag : ${{ github.event.inputs.target_tag }}"
+          echo "  Time (UTC) : $(date -u)"
