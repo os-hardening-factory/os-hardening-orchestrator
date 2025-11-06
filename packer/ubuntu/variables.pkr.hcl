@@ -16,5 +16,5 @@ variable "local_tag" {
 
 variable "ansible_playbook" {
   type    = string
-  default = "../../playbooks/ubuntu-hardening.yml"
+  default = "ansible/playbook.yml"
 }
