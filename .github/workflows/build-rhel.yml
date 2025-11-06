@@ -15,61 +15,161 @@ jobs:
       OS_VERSION: "9"
       CIS_VERSION: "1.5"
       AWS_REGION: "ap-south-1"
-      PACKER_VERSION: "1.11.2"
+      PACKER_VERSION: "1.14.2"
 
     steps:
+      # ---------------------------------------------------------
+      # Step 1 - Checkout repo
+      # ---------------------------------------------------------
       - name: 🧾 Checkout repository
         uses: actions/checkout@v4
 
-      - name: 🔐 Configure AWS credentials via OIDC
+      # ---------------------------------------------------------
+      # Step 2 - Configure AWS credentials (OIDC)
+      # ---------------------------------------------------------
+      - name: 🔐 Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::661539128717:role/GitHubActionsFactoryRole
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: 🔧 Install dependencies (no containerd conflicts)
+      # ---------------------------------------------------------
+      # Step 3 - Install dependencies
+      # ---------------------------------------------------------
+      - name: 🔧 Install base dependencies
         run: |
+          set -e
+          echo "🔧 Installing base dependencies..."
           sudo apt-get update -y
-          sudo apt-get install -y wget curl unzip python3-pip gpg software-properties-common
+          sudo apt-get install -y wget curl unzip python3-pip gpg jq lsb-release software-properties-common
           pip3 install boto3 PyGithub
-          echo "✅ Dependencies installed"
+          echo "✅ Base dependencies installed"
 
-      - name: 📦 Install Packer
+      # ---------------------------------------------------------
+      # Step 4 - Install Packer (Binary)
+      # ---------------------------------------------------------
+      - name: 📦 Install Packer binary
         run: |
+          echo "📦 Installing Packer ${PACKER_VERSION}..."
           curl -fsSL "https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_linux_amd64.zip" -o packer.zip
           sudo unzip -o packer.zip -d /usr/local/bin/
           rm -f packer.zip
           packer version
+          echo "✅ Packer installed successfully"
 
-      - name: 🧩 Install required Packer plugins
+      # ---------------------------------------------------------
+      # Step 5 - Install required Packer plugins (fix for 404)
+      # ---------------------------------------------------------
+      - name: 🧩 Install Packer plugins manually (Docker & Ansible)
         run: |
-          packer plugins install github.com/hashicorp/docker
-          packer plugins install github.com/hashicorp/ansible
+          echo "🧩 Installing required Packer plugins..."
+          set -e
+          packer plugins install github.com/hashicorp/docker@v1.1.2
+          packer plugins install github.com/hashicorp/ansible@v1.1.4
+          echo "✅ Plugins installed successfully"
+          packer plugins installed
 
-      - name: 🧩 Validate Packer configuration
+      # ---------------------------------------------------------
+      # Step 6 - Verify Docker availability
+      # ---------------------------------------------------------
+      - name: 🐋 Verify Docker environment
         run: |
+          echo "🐋 Checking Docker availability..."
+          docker --version || (echo "❌ Docker not found" && exit 1)
+          docker info || (echo "❌ Docker daemon unavailable" && exit 1)
+          echo "✅ Docker is ready"
+
+      # ---------------------------------------------------------
+      # Step 7 - Initialize and validate Packer
+      # ---------------------------------------------------------
+      - name: 🧩 Initialize and validate Packer
+        run: |
+          echo "🧩 Initializing and validating Packer..."
           packer init packer/rhel
           packer validate packer/rhel
+          echo "✅ Packer validation successful"
 
+      # ---------------------------------------------------------
+      # Step 8 - Build hardened RHEL image
+      # ---------------------------------------------------------
       - name: 🏗️ Build hardened RHEL image
         run: |
           TIMESTAMP=$(date +%Y%m%d)
           TAG="${{ env.OS_NAME }}-${{ env.OS_VERSION }}-cis${{ env.CIS_VERSION }}-hardening-${TIMESTAMP}"
-          echo "🚀 Building hardened image: $TAG"
+
+          echo "🚀 Building hardened image: ${TAG}"
           packer build \
             -var "image_name=${TAG}" \
-            -var "base_image=registry.access.redhat.com/ubi9/ubi" \
+            -var "base_image=registry.access.redhat.com/ubi9/ubi:latest" \
             packer/rhel
 
-      - name: 🔍 Scan image using Trivy
+          echo "✅ Build completed: ${TAG}:latest"
+
+      # ---------------------------------------------------------
+      # Step 9 - Trivy Security Scan
+      # ---------------------------------------------------------
+      - name: 🔍 Scan image with Trivy
         run: |
+          echo "🔍 Installing Trivy scanner..."
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /tmp
+          sudo mv /tmp/trivy /usr/local/bin/trivy
+
           TIMESTAMP=$(date +%Y%m%d)
           TAG="${{ env.OS_NAME }}-${{ env.OS_VERSION }}-cis${{ env.CIS_VERSION }}-hardening-${TIMESTAMP}"
           mkdir -p reports
-          trivy image "${TAG}:latest" -f json -o reports/trivy-${TAG}.json || true
+          echo "🔍 Scanning image: ${TAG}:latest"
+          trivy image "${TAG}:latest" --format json -o reports/trivy-${TAG}.json || true
+          echo "✅ Trivy scan complete"
 
-      - name: 📤 Upload reports
+      # ---------------------------------------------------------
+      # Step 10 - Upload reports as artifacts
+      # ---------------------------------------------------------
+      - name: 📊 Upload security reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-${{ env.OS_NAME }}-report
+          name: trivy-rhel-scan
           path: reports/
+          retention-days: 30
+
+      # ---------------------------------------------------------
+      # Step 11 - Upload compliance report to S3
+      # ---------------------------------------------------------
+      - name: ☁️ Upload compliance report to S3
+        if: success()
+        run: |
+          echo "☁️ Uploading compliance report..."
+          python3 tools/upload_to_s3_and_trigger_glue.py
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+
+      # ---------------------------------------------------------
+      # Step 12 - Update changelog
+      # ---------------------------------------------------------
+      - name: 🪶 Update vendor changelog
+        if: success()
+        run: |
+          TIMESTAMP=$(date +%Y%m%d)
+          echo "🪶 Updating changelog for ${TAG}..."
+          python3 tools/dispatch_to_vendor_repos.py \
+            --vendor "${{ env.OS_NAME }}" \
+            --cis_profile "cis${{ env.CIS_VERSION }}" \
+            --version "v1.0.0" \
+            --build_date "${TIMESTAMP}" \
+            --summary "CIS ${{ env.CIS_VERSION }} compliance and CVE remediations"
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      # ---------------------------------------------------------
+      # Step 13 - Build Summary
+      # ---------------------------------------------------------
+      - name: 📝 Build Summary
+        if: always()
+        run: |
+          echo "## ✅ RHEL Hardened Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: rhel-${{ env.OS_VERSION }}-cis${{ env.CIS_VERSION }}-hardening" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Date**: $(date +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
+          echo "- **AWS Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **CIS Profile**: ${CIS_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check attached artifacts for Trivy security reports." >> $GITHUB_STEP_SUMMARY
