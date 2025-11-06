@@ -20,6 +20,7 @@ source "docker" "ubuntu" {
 build {
   name    = "ubuntu-hardened"
   sources = ["source.docker.ubuntu"]
+  variables = ["packer/variables.pkr.hcl"]
 
   provisioner "ansible" {
     playbook_file = "./packer/ubuntu/ansible/playbook.yml"

@@ -20,6 +20,7 @@ source "docker" "rhel" {
 build {
   name    = "rhel-hardened"
   sources = ["source.docker.rhel"]
+  variables = ["packer/variables.pkr.hcl"]
 
   provisioner "ansible" {
     playbook_file = "./packer/rhel/ansible/playbook.yml"

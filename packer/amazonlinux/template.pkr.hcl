@@ -20,6 +20,7 @@ source "docker" "amazonlinux" {
 build {
   name    = "amazonlinux-hardened"
   sources = ["source.docker.amazonlinux"]
+  variables = ["packer/variables.pkr.hcl"]
 
   provisioner "ansible" {
     playbook_file = "./packer/amazonlinux/ansible/playbook.yml"
