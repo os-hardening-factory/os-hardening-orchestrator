@@ -11,10 +11,6 @@ packer {
   }
 }
 
-variable "local_tag" {
-  type    = string
-  default = "rhel-hardened:latest"
-}
 
 source "docker" "rhel" {
   image  = "rhel:latest"

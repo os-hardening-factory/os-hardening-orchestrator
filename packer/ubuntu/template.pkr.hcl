@@ -11,10 +11,6 @@ packer {
   }
 }
 
-variable "local_tag" {
-  type    = string
-  default = "ubuntu-hardened:latest"
-}
 
 source "docker" "ubuntu" {
   image  = "ubuntu:latest"

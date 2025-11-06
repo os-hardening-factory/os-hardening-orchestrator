@@ -11,10 +11,6 @@ packer {
   }
 }
 
-variable "local_tag" {
-  type    = string
-  default = "amazonlinux-hardened:latest"
-}
 
 source "docker" "amazonlinux" {
   image  = "amazonlinux:latest"
