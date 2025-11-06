@@ -1,4 +1,3 @@
-# Variables for Amazon Linux Hardened Image
 variable "image_name" {
   type    = string
   default = "amazonlinux-hardened"
@@ -16,5 +15,5 @@ variable "local_tag" {
 
 variable "ansible_playbook" {
   type    = string
-  default = "../../playbooks/amazonlinux-hardening.yml"
+  default = "ansible/playbook.yml"
 }
