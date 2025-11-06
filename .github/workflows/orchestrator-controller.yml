@@ -1,14 +1,17 @@
 name: 🧩 OS Hardening Controller
 
 on:
+  # ✅ Manual trigger only
   workflow_dispatch:
     inputs:
       vendor:
-        description: "Choose target vendor (amazonlinux | ubuntu | rhel | all)"
+        description: "Select OS vendor (amazonlinux | ubuntu | rhel | all)"
         required: true
         default: "all"
 
-# Prevents parallel runs from colliding
+# ✅ No push or PR events defined at all
+# Prevents any auto-triggering when the file itself changes
+
 concurrency:
   group: "controller-${{ github.ref }}"
   cancel-in-progress: false
@@ -25,12 +28,12 @@ jobs:
       matrix:
         vendor: [ubuntu, amazonlinux, rhel]
     steps:
-      - name: ▶️ Trigger vendor workflow - ${{ matrix.vendor }}
+      - name: ▶️ Call vendor workflow - ${{ matrix.vendor }}
         uses: ./.github/workflows/build-${{ matrix.vendor }}.yml
 
   build-one:
     if: ${{ github.event.inputs.vendor != 'all' }}
     runs-on: ubuntu-latest
     steps:
-      - name: ▶️ Trigger vendor workflow - ${{ github.event.inputs.vendor }}
+      - name: ▶️ Call vendor workflow - ${{ github.event.inputs.vendor }}
         uses: ./.github/workflows/build-${{ github.event.inputs.vendor }}.yml
