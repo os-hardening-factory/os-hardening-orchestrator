@@ -67,10 +67,15 @@ build {
   provisioner "ansible-local" {
     playbook_file     = "ansible/playbook.yml"
     playbook_dir      = "ansible"
-    role_paths        = ["ansible/roles/cis", "ansible/roles/common", "ansible/roles/cis_baseline"]
+    role_paths        = [
+      "ansible/roles/cis",
+      "ansible/roles/common",
+      "ansible/roles/cis_baseline"
+    ]
     staging_directory = "/tmp/ansible"
     extra_arguments   = ["--verbose"]
   }
+
 
   # 3️⃣ Optional: Post-hardening cleanup (to keep image light)
   provisioner "shell" {
