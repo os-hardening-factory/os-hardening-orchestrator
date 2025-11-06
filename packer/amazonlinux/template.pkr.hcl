@@ -34,29 +34,32 @@ build {
   # 1️⃣ Pre-install Python & Ansible inside container
   provisioner "shell" {
     inline = [
-      "echo '🧩 Preparing container for Ansible provisioning...'",
+      <<EOF
+      echo '🧩 Preparing container for Ansible provisioning...'
 
-      # Install Python 3, pip, and DNF bindings for Ansible
-      "if command -v dnf >/dev/null 2>&1; then \
-         dnf install -y python3 python3-pip python3-dnf; \
-       else \
-         yum install -y python3 python3-pip; \
-         yum install -y python3-dnf || true; \
-       fi",
+      # Install Python 3, pip, and DNF bindings
+      if command -v dnf >/dev/null 2>&1; then
+        dnf install -y python3 python3-pip python3-dnf
+      else
+        yum install -y python3 python3-pip
+        yum install -y python3-dnf || true
+      fi
 
-      # Ensure python3 is default
-      "alternatives --set python /usr/bin/python3 || true",
+      # Set Python 3 as default
+      alternatives --set python /usr/bin/python3 || true
 
-      # Install Ansible itself
-      "pip3 install ansible",
+      # Install Ansible
+      pip3 install ansible
 
-      # Show installed versions
-      "python3 --version",
-      "ansible --version",
+      # Display versions for debugging
+      python3 --version
+      ansible --version
 
-      "echo '✅ System prepared for hardening execution.'"
+      echo '✅ System prepared for hardening execution.'
+      EOF
     ]
   }
+
 
 
 
