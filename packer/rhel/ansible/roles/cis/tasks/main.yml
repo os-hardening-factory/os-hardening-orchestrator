@@ -28,17 +28,20 @@
 
 - name: Ensure essential packages are installed safely (handle curl-minimal conflict)
   ansible.builtin.shell: |
-    dnf install -y --nobest --allowerasing bash wget vim net-tools || true
-    if rpm -q curl-minimal; then
+    set -e
+    echo "📦 Installing essential packages..."
+    dnf install -y --nobest --allowerasing bash wget vim net-tools
+    if rpm -q curl-minimal >/dev/null 2>&1; then
       echo "✅ curl-minimal already installed, skipping curl."
     else
-      dnf install -y --nobest --allowerasing curl || true
+      echo "📦 Installing curl..."
+      dnf install -y --nobest --allowerasing curl
     fi
-  args:
-    warn: false
   register: essential_pkg_result
-  changed_when: "'Complete!' in essential_pkg_result.stdout"
-  failed_when: false
+  changed_when: "'Installed:' in essential_pkg_result.stdout or 'Upgraded:' in essential_pkg_result.stdout"
+  failed_when: essential_pkg_result.rc != 0
+  become: true
+
 
 
 # ============================================================
