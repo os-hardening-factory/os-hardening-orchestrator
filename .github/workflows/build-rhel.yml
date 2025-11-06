@@ -27,44 +27,62 @@ jobs:
           role-to-assume: arn:aws:iam::661539128717:role/GitHubActionsFactoryRole
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: 🧹 Clean previous Packer plugin cache
+      - name: 🔧 Install minimal deps
         run: |
-          echo "🧹 Cleaning Packer plugin cache..."
-          rm -rf ~/.config/packer/plugins || true
+          set -e
+          sudo apt-get update -y
+          sudo apt-get install -y wget curl unzip python3-pip jq
+          pip3 install --upgrade pip
+          pip3 install boto3 PyGithub
 
-      - name: 📦 Install Packer (binary)
+      - name: 📦 Install Packer via binary (no APT)
         run: |
-          echo "📦 Installing Packer ${PACKER_VERSION}..."
+          echo "📦 Installing HashiCorp Packer v${PACKER_VERSION} (binary)..."
           curl -fsSL "https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_linux_amd64.zip" -o packer.zip
           sudo unzip -o packer.zip -d /usr/local/bin/
           rm -f packer.zip
           packer version
+          echo "✅ Packer installed successfully without APT."
 
-      - name: 🧩 Preinstall required Packer plugins
+      - name: 🧹 Clean any old plugin cache
         run: |
-          echo "🧩 Installing required plugins manually..."
-          mkdir -p ~/.config/packer/plugins/github.com/hashicorp
+          rm -rf ~/.config/packer/plugins || true
+          mkdir -p ~/.config/packer/plugins/github.com/hashicorp/docker
+          mkdir -p ~/.config/packer/plugins/github.com/hashicorp/ansible
 
-          # Docker Plugin
-          packer plugins install github.com/hashicorp/docker || \
-            (echo "⚠️ Retrying docker plugin via manual download" && \
-            curl -fsSL -o docker.zip https://releases.hashicorp.com/packer-plugin-docker/1.1.2/packer-plugin-docker_1.1.2_linux_amd64.zip && \
-            unzip docker.zip -d ~/.config/packer/plugins/github.com/hashicorp/docker && rm docker.zip)
+      # ✅ Offline exact plugin install with the filenames Packer expects
+      - name: 🧩 Install Packer plugins offline (exact versions)
+        run: |
+          set -e
+          D_DIR="$HOME/.config/packer/plugins/github.com/hashicorp/docker"
+          A_DIR="$HOME/.config/packer/plugins/github.com/hashicorp/ansible"
 
-          # Ansible Plugin
-          packer plugins install github.com/hashicorp/ansible || \
-            (echo "⚠️ Retrying ansible plugin via manual download" && \
-            curl -fsSL -o ansible.zip https://releases.hashicorp.com/packer-plugin-ansible/1.1.4/packer-plugin-ansible_1.1.4_linux_amd64.zip && \
-            unzip ansible.zip -d ~/.config/packer/plugins/github.com/hashicorp/ansible && rm ansible.zip)
+          # Docker plugin v1.1.2
+          curl -fsSL -o /tmp/pp-docker.zip https://releases.hashicorp.com/packer-plugin-docker/1.1.2/packer-plugin-docker_1.1.2_linux_amd64.zip
+          unzip -o /tmp/pp-docker.zip -d /tmp/
+          # Move to EXACT name Packer looks for:
+          # packer-plugin-docker_v1.1.2_x5.0_linux_amd64
+          mv /tmp/packer-plugin-docker "$D_DIR/packer-plugin-docker_v1.1.2_x5.0_linux_amd64"
+          chmod +x "$D_DIR/packer-plugin-docker_v1.1.2_x5.0_linux_amd64"
 
-          echo "✅ Plugins installed successfully"
-          packer plugins installed
+          # Ansible plugin v1.1.4
+          curl -fsSL -o /tmp/pp-ansible.zip https://releases.hashicorp.com/packer-plugin-ansible/1.1.4/packer-plugin-ansible_1.1.4_linux_amd64.zip
+          unzip -o /tmp/pp-ansible.zip -d /tmp/
+          mv /tmp/packer-plugin-ansible "$A_DIR/packer-plugin-ansible_v1.1.4_x5.0_linux_amd64"
+          chmod +x "$A_DIR/packer-plugin-ansible_v1.1.4_x5.0_linux_amd64"
+
+          echo "✅ Offline plugins placed:"
+          ls -l "$D_DIR" "$A_DIR"
 
       - name: 🧩 Initialize and validate RHEL Packer template
         run: |
           echo "🧩 Initializing and validating RHEL Packer template..."
           packer init packer/rhel
-          packer validate packer/rhel
+          # Provide known vars for validate
+          packer validate \
+            -var "image_name=rhel-validate-placeholder" \
+            -var "base_image=redhat/ubi9:latest" \
+            packer/rhel
           echo "✅ RHEL Packer configuration is valid"
 
       - name: 🏗️ Build hardened RHEL image
@@ -78,11 +96,11 @@ jobs:
             packer/rhel
           echo "✅ RHEL image build complete: ${TAG}:latest"
 
-      - name: 🔍 Scan image using Trivy
+      - name: 🔍 Install Trivy & Scan
         run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
           TIMESTAMP=$(date +%Y%m%d)
           TAG="${{ env.OS_NAME }}-${{ env.OS_VERSION }}-cis${{ env.CIS_VERSION }}-hardening-${TIMESTAMP}"
-          echo "🔍 Scanning RHEL image: ${TAG}"
           mkdir -p reports
           trivy image "${TAG}:latest" --format json -o reports/trivy-${TAG}.json --severity HIGH,CRITICAL || true
 

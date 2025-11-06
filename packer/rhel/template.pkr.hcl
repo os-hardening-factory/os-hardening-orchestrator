@@ -3,11 +3,12 @@ packer {
 
   required_plugins {
     docker = {
-      version = ">= 1.1.0"
+      # Pin EXACTLY to the latest available version in the public index
+      version = "= 1.1.2"
       source  = "github.com/hashicorp/docker"
     }
     ansible = {
-      version = ">= 1.1.0"
+      version = "= 1.1.4"
       source  = "github.com/hashicorp/ansible"
     }
   }
@@ -22,7 +23,7 @@ source "docker" "rhel" {
   changes = [
     "LABEL os-hardening=true",
     "ENV LANG=en_US.UTF-8",
-    "ENV ANSIBLE_HOST_KEY_CHECKING=False"
+    "ENV LC_ALL=en_US.UTF-8"
   ]
 }
 
@@ -33,22 +34,28 @@ build {
   name    = var.image_name
   sources = ["source.docker.rhel"]
 
+  # Install tools inside UBI9
   provisioner "shell" {
     inline = [
-      "yum -y update",
-      "yum -y install python3 python3-pip git sudo curl ansible",
-      "ansible --version || echo '✅ Ansible installed successfully'",
-      "yum clean all"
+      "set -euo pipefail",
+      # UBI9 uses microdnf reliably; fallback to dnf
+      "command -v microdnf >/dev/null 2>&1 && microdnf update -y || true",
+      "command -v microdnf >/dev/null 2>&1 && microdnf install -y python3 git openssh-clients sudo tzdata ansible || true",
+      "command -v microdnf >/dev/null 2>&1 || (dnf -y update && dnf -y install python3 git openssh-clients sudo tzdata ansible || true)",
+      "python3 --version || true",
+      "ansible --version || true"
     ]
   }
 
+  # Run CIS hardening
   provisioner "ansible-local" {
-    playbook_file = var.ansible_playbook
-    playbook_dir  = "ansible"
-    role_paths    = ["ansible/roles"]
+    playbook_file   = var.ansible_playbook
+    playbook_dir    = "ansible"
+    role_paths      = ["ansible/roles"]
     extra_arguments = ["-e", "ANSIBLE_HOST_KEY_CHECKING=False"]
   }
 
+  # Tag final image
   post-processor "docker-tag" {
     repository = var.image_name
     tags       = ["latest"]
