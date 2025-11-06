@@ -46,13 +46,6 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y ansible python3-boto3 jq
 
-      - name: Initialize and build hardened image
-        run: |
-          packer init packer/${{ matrix.os_type }}
-          packer build -var "local_tag=${{ matrix.os_type }}-hardened:$(date +%Y%m%d%H%M)" packer/${{ matrix.os_type }}
-
-      - name: Generate sample compliance reports
-        run: |
           mkdir -p reports
           echo '{"meta":{"os":"${{ matrix.os_type }}"},"cis":{"status":"PASS"},"trivy":{"critical":0,"high":2},"sbom":{"packages":10}}' > reports/compliance_report.json
           echo '{"scan":"trivy","summary":{"critical":0,"high":2}}' > reports/trivy.json

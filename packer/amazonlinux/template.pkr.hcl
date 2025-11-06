@@ -17,6 +17,6 @@ build {
 
   post-processor "docker-tag" {
     repository = "661539128717.dkr.ecr.ap-south-1.amazonaws.com/hardened-amazonlinux"
-    tag        = "latest"
+    tag        = var.local_tag
   }
 }
