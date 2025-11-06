@@ -1,11 +1,45 @@
 ---
-- name: Restart SSH if available
-  ansible.builtin.service:
+# Detect environment (shared variable for conditional restarts)
+- name: Detect init system (container vs VM)
+  ansible.builtin.command: cat /proc/1/comm
+  register: init_process
+  changed_when: false
+  failed_when: false
+  listen: Restart SSH
+
+# Restart sshd via systemd if available (RHEL / EC2 builds)
+- name: Restart sshd using systemd if available
+  ansible.builtin.systemd:
     name: sshd
     state: restarted
-    enabled: true
-  register: ssh_restart_result
-  failed_when: false
-  changed_when: ssh_restart_result.changed | default(false)
-  ignore_errors: true
-  when: ansible_facts.services is defined and ('sshd.service' in ansible_facts.services or 'sshd' in ansible_facts.services)
+  when:
+    - init_process.stdout == "systemd"
+    - "'sshd.service' in ansible_facts.services or 'sshd' in ansible_facts.services"
+  become: true
+  listen: Restart SSH
+
+# Restart sshd manually when systemd is not available (bare-metal or chroot builds)
+- name: Restart sshd manually when systemd is not available
+  ansible.builtin.shell: |
+    if command -v sshd >/dev/null 2>&1; then
+      pkill -HUP sshd || true
+      sshd -t && sshd || true
+    else
+      echo "⚠️  sshd not installed — skipping manual restart."
+    fi
+  args:
+    executable: /bin/bash
+  when:
+    - init_process.stdout != "systemd"
+  become: true
+  listen: Restart SSH
+
+# Skip restart gracefully in containers without sshd (e.g., Amazon Linux base image)
+- name: Skip SSH restart in container builds
+  ansible.builtin.debug:
+    msg: "Skipping SSH restart — running in minimal container without sshd."
+  when:
+    - init_process.stdout not in ["systemd"]
+    - ansible_facts.pkg_mgr == "yum" or ansible_facts.pkg_mgr == "dnf"
+    - not (ansible_facts.services is defined and ('sshd' in ansible_facts.services or 'sshd.service' in ansible_facts.services))
+  listen: Restart SSH
