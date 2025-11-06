@@ -63,6 +63,5 @@ build {
   # -------------------------------------------------------------------------
   post-processor "docker-tag" {
     repository = var.image_name
-    tags       = [var.local_tag]
   }
 }

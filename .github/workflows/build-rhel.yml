@@ -77,7 +77,6 @@ jobs:
         run: |
           packer init packer/rhel
           packer validate packer/rhel
-          packer build -var "local_tag=${TAG}" packer/rhel
 
       - name: 🗃️ Save image
         run: |

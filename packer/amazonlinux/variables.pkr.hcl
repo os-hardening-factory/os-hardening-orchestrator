@@ -8,7 +8,6 @@ variable "base_image" {
   default = "amazonlinux:2023"
 }
 
-variable "local_tag" {
   type    = string
   default = "latest"
 }

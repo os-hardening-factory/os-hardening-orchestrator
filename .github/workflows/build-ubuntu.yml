@@ -78,7 +78,6 @@ jobs:
           TAG="${{ env.OS_NAME }}-${{ env.OS_VERSION }}-cis${{ env.CIS_VERSION }}-hardening-${TIMESTAMP}"
           echo "🚀 Building hardened image: $TAG"
           packer build \
-            -var "local_tag=latest" \
             -var "image_name=${TAG}" \
             -var "base_image=ubuntu:22.04" \
             packer/ubuntu

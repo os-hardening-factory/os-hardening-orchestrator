@@ -8,7 +8,6 @@ variable "base_image" {
   default = "registry.access.redhat.com/ubi9/ubi"
 }
 
-variable "local_tag" {
   type    = string
   default = "latest"
 }
