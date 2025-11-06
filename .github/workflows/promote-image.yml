@@ -1,4 +1,4 @@
-name: 🚀 Promote Hardened Image to Prod (with Security Gating)
+name: 🚀 Promote Hardened Image to Prod (with Security Gating + Release Publishing)
 
 on:
   workflow_dispatch:
@@ -14,13 +14,21 @@ on:
         description: "New promotion tag (e.g., ubuntu-22.04-intuit-prod)"
         required: true
         default: "ubuntu-22.04-intuit-prod"
+      cis_profile:
+        description: "CIS profile version (e.g., cis1.4)"
+        required: true
+        default: "cis1.4"
+      version:
+        description: "OS version (e.g., 22.04)"
+        required: true
+        default: "22.04"
 
 jobs:
   promote:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
-      contents: read
+      contents: write
 
     env:
       AWS_REGION: ap-south-1
@@ -38,17 +46,15 @@ jobs:
           echo "Vendor        : ${{ github.event.inputs.vendor }}"
           echo "Source tag    : ${{ github.event.inputs.source_tag }}"
           echo "Target tag    : ${{ github.event.inputs.target_tag }}"
+          echo "CIS profile   : ${{ github.event.inputs.cis_profile }}"
+          echo "Version       : ${{ github.event.inputs.version }}"
 
-      # -------------------------------------------------------------------
-      #  Phase 2 – Step 2.1 : Automated Security Gating using Trivy
-      # -------------------------------------------------------------------
+      # ---------- Trivy Scan + Security Gating (same as before) ----------
       - name: 🔍 Install Trivy
         run: |
-          echo "📦 Installing Trivy vulnerability scanner..."
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sh -s -- -b /usr/local/bin
           trivy --version
-          echo "✅ Trivy installed successfully."
 
       - name: 🛡️ Security Gate (Trivy CVE check)
         env:
@@ -61,60 +67,33 @@ jobs:
           set -euo pipefail
           REPO="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/hardened-${VENDOR}"
           IMG="${REPO}:${SOURCE_TAG}"
-
-          echo "🔎 Scanning image for vulnerabilities: ${IMG}"
-
-          # Authenticate & pull image
-          aws ecr get-login-password --region ${AWS_REGION} \
-            | docker login --username AWS --password-stdin ${REPO}
+          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REPO}
           docker pull "${IMG}"
-
           mkdir -p reports
-          echo "🧪 Running Trivy scan for severities: ${BLOCK_SEVERITIES}"
-          trivy image --timeout 5m \
-            --severity ${BLOCK_SEVERITIES} \
-            --format json \
-            --output "reports/trivy-${VENDOR}-${SOURCE_TAG}.json" \
-            "${IMG}" || true
-
-          # Parse Trivy output to count vulnerabilities
-          CRIT=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "reports/trivy-${VENDOR}-${SOURCE_TAG}.json")
-          HIGH=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "reports/trivy-${VENDOR}-${SOURCE_TAG}.json")
-
-          echo "🔢 Vulnerability counts → CRITICAL=${CRIT}, HIGH=${HIGH}"
+          trivy image --timeout 5m --severity ${BLOCK_SEVERITIES} \
+            --format json --output "reports/trivy-${VENDOR}-${SOURCE_TAG}.json" "${IMG}" || true
+          CRIT=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' reports/trivy-${VENDOR}-${SOURCE_TAG}.json)
+          HIGH=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="HIGH")] | length' reports/trivy-${VENDOR}-${SOURCE_TAG}.json)
+          echo "CRITICAL=${CRIT} HIGH=${HIGH}"
           if [ "${CRIT}" -gt 0 ] || [ "${HIGH}" -gt 0 ]; then
-            echo "❌ Security gate failed: Found CRITICAL/HIGH vulnerabilities."
-            echo "🧾 Detailed report saved to reports/trivy-${VENDOR}-${SOURCE_TAG}.json"
-            exit 1
-          fi
+            echo "❌ Blocked due to critical vulnerabilities"; exit 1; fi
+          echo "✅ Passed security gate"
 
-          echo "✅ Security gate passed: No CRITICAL/HIGH vulnerabilities found."
-
-      # -------------------------------------------------------------------
-      #  Step 2.1 (continued): Promote image only if gate passes
-      # -------------------------------------------------------------------
-      - name: 🧱 Pull, retag, and push image (Prod)
-        if: success() # runs only if Trivy gate passed
+      # ---------- Promotion ----------
+      - name: 🧱 Retag and push image (Prod)
+        if: success()
         run: |
           VENDOR=${{ github.event.inputs.vendor }}
           SRC=${{ github.event.inputs.source_tag }}
           DST=${{ github.event.inputs.target_tag }}
           REPO="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/hardened-${VENDOR}"
-
-          echo "🔹 Promoting ${REPO}:${SRC} → ${REPO}:${DST}"
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} \
-            | docker login --username AWS --password-stdin ${REPO}
-
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${REPO}
           docker pull ${REPO}:${SRC}
           docker tag  ${REPO}:${SRC} ${REPO}:${DST}
           docker push ${REPO}:${DST}
+          echo "✅ Promoted ${REPO}:${SRC} → ${REPO}:${DST}"
 
-          echo "✅ Promotion complete: ${REPO}:${DST}"
-
-      # -------------------------------------------------------------------
-      #  Step 2.1 (continued): Always upload scan report
-      # -------------------------------------------------------------------
-      - name: 📊 Upload Trivy report (for audit)
+      - name: 📊 Upload Trivy report
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -122,12 +101,39 @@ jobs:
           path: reports/
           retention-days: 30
 
+      # ---------- New Section: Release Notes & Vendor Repo Update ----------
+      - name: 🧾 Generate release metadata and changelog entry
+        id: metadata
+        if: success()
+        run: |
+          DATE=$(date +%Y%m%d)
+          COMMIT=$(git rev-parse --short HEAD || echo "manual")
+          ECR_IMAGE="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/hardened-${{ github.event.inputs.vendor }}:${{ github.event.inputs.target_tag }}"
+          echo "ECR_IMAGE=${ECR_IMAGE}" >> $GITHUB_ENV
+          echo "DATE=${DATE}" >> $GITHUB_ENV
+          SUMMARY="Image promoted to prod after security validation. CRITICAL/HIGH CVEs = 0."
+          echo "SUMMARY=${SUMMARY}" >> $GITHUB_ENV
+          echo "✅ Metadata prepared."
+
+      - name: 🚀 Dispatch release to vendor repo
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          python3 tools/dispatch_to_vendor_repos.py \
+            --vendor "${{ github.event.inputs.vendor }}" \
+            --cis_profile "${{ github.event.inputs.cis_profile }}" \
+            --version "${{ github.event.inputs.version }}" \
+            --build_date "${{ env.DATE }}" \
+            --summary "${{ env.SUMMARY }}"
+          echo "✅ Release published to vendor repo"
+
       - name: 🧾 Record promotion details
         if: success()
         run: |
-          echo "timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
-          echo "Promoted image details:"
+          echo "Promotion Summary:"
           echo "  Vendor     : ${{ github.event.inputs.vendor }}"
           echo "  Source Tag : ${{ github.event.inputs.source_tag }}"
           echo "  Target Tag : ${{ github.event.inputs.target_tag }}"
-          echo "  Time (UTC) : $(date -u)"
+          echo "  ECR Image  : ${{ env.ECR_IMAGE }}"
+          echo "  Date       : ${{ env.DATE }}"
