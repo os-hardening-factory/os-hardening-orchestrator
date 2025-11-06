@@ -35,13 +35,29 @@ build {
   provisioner "shell" {
     inline = [
       "echo '🧩 Preparing container for Ansible provisioning...'",
-      # Install Python and pip directly as root
-      "if command -v dnf >/dev/null 2>&1; then dnf install -y python3 python3-pip; else yum install -y python3 python3-pip; fi",
+
+      # Install Python 3, pip, and DNF bindings for Ansible
+      "if command -v dnf >/dev/null 2>&1; then \
+         dnf install -y python3 python3-pip python3-dnf; \
+       else \
+         yum install -y python3 python3-pip; \
+         yum install -y python3-dnf || true; \
+       fi",
+
+      # Ensure python3 is default
+      "alternatives --set python /usr/bin/python3 || true",
+
+      # Install Ansible itself
       "pip3 install ansible",
-      "ansible --version || echo '⚠️ Ansible installation failed!'",
+
+      # Show installed versions
+      "python3 --version",
+      "ansible --version",
+
       "echo '✅ System prepared for hardening execution.'"
     ]
   }
+
 
 
   # 2️⃣ Run the Ansible playbook from inside the container

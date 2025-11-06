@@ -2,6 +2,8 @@
 - name: CIS Hardening for Amazon Linux 2
   hosts: localhost
   become: yes
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
 
   roles:
     - role: common
