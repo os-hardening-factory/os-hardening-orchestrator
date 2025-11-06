@@ -1,7 +1,8 @@
 ---
-# handlers/main.yml
+# roles/cis/handlers/main.yml
 
 - name: Restart SSH
+  listen: Restart SSH
   block:
     - name: Detect if running inside a container
       ansible.builtin.command: cat /proc/1/comm
@@ -24,3 +25,4 @@
         fi
       when: init_process.stdout != "systemd"
       become: true
+
