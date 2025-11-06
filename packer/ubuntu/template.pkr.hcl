@@ -13,9 +13,7 @@ packer {
   }
 }
 
-# ---------------------------------------------------------------------------
-# Docker source definition
-# ---------------------------------------------------------------------------
+# Docker source
 source "docker" "ubuntu" {
   image  = var.base_image
   commit = true
@@ -25,51 +23,36 @@ source "docker" "ubuntu" {
   ]
 }
 
-# ---------------------------------------------------------------------------
-# Build definition
-# ---------------------------------------------------------------------------
+# Build
 build {
   name    = var.image_name
   sources = ["source.docker.ubuntu"]
 
-  # -------------------------------------------------------------------------
-  # Step 1: Install dependencies and Ansible inside the container
-  # -------------------------------------------------------------------------
+  # Install deps + ansible inside container
   provisioner "shell" {
     inline = [
       "export DEBIAN_FRONTEND=noninteractive",
       "ln -fs /usr/share/zoneinfo/UTC /etc/localtime",
       "apt-get update -y",
-      # Install Python and Ansible (critical for CIS playbook)
       "apt-get install -y tzdata python3 python3-apt git curl sudo ansible",
-      # Set timezone non-interactively
       "dpkg-reconfigure --frontend noninteractive tzdata",
-      # Validate Ansible installation
       "ansible --version || echo '✅ Ansible installed successfully'",
-      # Cleanup
       "apt-get clean && rm -rf /var/lib/apt/lists/*"
     ]
   }
 
-  # -------------------------------------------------------------------------
-  # Step 2: Run CIS hardening Ansible playbook inside the image
-  # -------------------------------------------------------------------------
+  # Run CIS playbook
   provisioner "ansible-local" {
-    # ✅ Use absolute paths so it works in both CI and local
     playbook_file = "${path.root}/ansible/playbook.yml"
     playbook_dir  = "${path.root}/ansible"
     role_paths    = ["${path.root}/ansible/roles"]
-
-    # Extra vars and host key handling
     extra_arguments = [
       "-e", "ANSIBLE_HOST_KEY_CHECKING=False",
       "--extra-vars", "ansible_python_interpreter=/usr/bin/python3"
     ]
   }
 
-  # -------------------------------------------------------------------------
-  # Step 3: Tag final image after successful hardening
-  # -------------------------------------------------------------------------
+  # ✅ Clean tag logic: repository is the full enterprise name, tag is simple
   post-processor "docker-tag" {
     repository = var.image_name
     tags       = ["latest"]
