@@ -11,6 +11,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     strategy:
       matrix:
         os_type: ${{ fromJson(github.event.inputs.vendor == 'all' && '["amazonlinux","ubuntu","rhel"]' || format('["{0}"]', github.event.inputs.vendor)) }}
@@ -40,15 +41,19 @@ jobs:
 
       - name: 🧩 Install required Packer plugins
         shell: bash
+        timeout-minutes: 15
         run: |
           echo "📦 Installing required Packer plugins..."
           set -e
-          packer plugins install github.com/hashicorp/ansible
-          packer plugins install github.com/hashicorp/docker
+          packer plugins install github.com/hashicorp/ansible || true
+          packer plugins install github.com/hashicorp/docker || true
           echo "✅ Installed Packer plugins:"
-          packer plugins installed || true
+          packer plugins installed
+          echo "⏳ Sleeping briefly to stabilize environment..."
+          sleep 15
 
       - name: 🏗️ Build hardened image for ${{ matrix.os_type }}
+        timeout-minutes: 60
         run: |
           echo "🚀 Building hardened image for ${{ matrix.os_type }}..."
           packer init packer/${{ matrix.os_type }}
