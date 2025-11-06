@@ -1,13 +1,7 @@
 packer {
   required_plugins {
-    docker = {
-      version = ">=1.0.8"
-      source  = "github.com/hashicorp/docker"
-    }
-    ansible = {
-      version = ">=1.1.0"
-      source  = "github.com/hashicorp/ansible"
-    }
+    docker = { version = ">=1.0.8", source = "github.com/hashicorp/docker" }
+    ansible = { version = ">=1.1.0", source = "github.com/hashicorp/ansible" }
   }
 }
 
@@ -20,8 +14,16 @@ build {
   name    = "rhel-hardened"
   sources = ["source.docker.rhel"]
 
+  provisioner "shell" {
+    inline = [
+      "which dnf >/dev/null 2>&1 && dnf install -y python3 sudo || yum install -y python3 sudo",
+      "ln -sf /usr/bin/python3 /usr/bin/python || true"
+    ]
+  }
+
   provisioner "ansible" {
-    playbook_file = "./packer/rhel/ansible/playbook.yml"
+    playbook_file    = "./packer/rhel/ansible/playbook.yml"
+    extra_arguments  = ["-e", "ansible_python_interpreter=/usr/bin/python3"]
   }
 
   post-processor "docker-tag" {
