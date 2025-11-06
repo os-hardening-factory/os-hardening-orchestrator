@@ -20,39 +20,36 @@ jobs:
           role-to-assume: arn:aws:iam::661539128717:role/GitHubActionsFactoryRole
           aws-region: ap-south-1
 
-      - name: 🔧 Install dependencies
+      - name: 🔧 Install dependencies (Packer, Trivy, Python)
         run: |
-          echo "🔧 Installing dependencies (Packer, Trivy, Python)..."
+          set -e
+          echo "🔧 Installing dependencies..."
 
-          # Update base system
+          # Base system deps
           sudo apt-get update -y
-          sudo apt-get install -y wget curl unzip python3-pip software-properties-common gpg lsb-release
+          sudo apt-get install -y wget curl unzip python3-pip gpg lsb-release software-properties-common
 
-          # ✅ Install Packer
+          # ✅ Install Packer (official)
           wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com noble main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
           sudo apt-get update -y && sudo apt-get install -y packer
 
-          # ✅ Check Docker availability (use preinstalled version in runner)
-          if ! command -v docker &> /dev/null; then
-            echo "⚠️ Docker not found — installing minimal docker.io..."
-            sudo apt-get install -y docker.io
-          fi
-          sudo systemctl enable docker || true
-          sudo systemctl start docker || true
-          docker version || (echo "❌ Docker not working!" && exit 1)
+          # ✅ Docker is already installed in GitHub runners; verify only
+          echo "🐋 Checking Docker..."
+          docker --version || (echo "❌ Docker missing" && exit 1)
+          docker info || (echo "❌ Docker not responding" && exit 1)
 
-          # ✅ Install Trivy securely without containerd.io
-          echo "📦 Installing Trivy..."
-          curl -fsSL https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update -y
-          sudo apt-get install -y trivy || (echo "⚠️ Trivy not available in cache, skipping..." && true)
+          # ✅ Install Trivy (standalone binary to avoid apt conflicts)
+          echo "📦 Installing Trivy binary..."
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+          sudo mv trivy /usr/local/bin/trivy
+          trivy --version
 
           # ✅ Python dependencies
           pip3 install boto3 PyGithub
 
-          echo "✅ Dependencies installed successfully."
+          echo "✅ All dependencies installed successfully (no containerd conflicts)."
+
 
 
 
