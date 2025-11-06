@@ -80,13 +80,28 @@ jobs:
       - name: 🧩 Initialize and validate RHEL Packer template
         run: |
           echo "🧩 Initializing and validating RHEL Packer template..."
+
+          echo "🔍 [DEBUG] Current working directory: $(pwd)"
+          echo "📂 [DEBUG] Listing packer/rhel structure:"
+          ls -R packer/rhel || echo "⚠️ packer/rhel directory not found!"
+
+          echo "📂 [DEBUG] Checking ansible paths:"
+          if [ ! -f "packer/rhel/ansible/playbook.yml" ]; then
+            echo "❌ Missing file: packer/rhel/ansible/playbook.yml"
+            exit 1
+          fi
+          if [ ! -d "packer/rhel/ansible/roles" ]; then
+            echo "❌ Missing directory: packer/rhel/ansible/roles/"
+            exit 1
+          fi
+          echo "✅ All required Ansible files exist!"
+
+          echo "🧩 Running Packer init..."
           packer init packer/rhel
-          # Provide known vars for validate
-          packer validate \
-            -var "image_name=rhel-validate-placeholder" \
-            -var "base_image=redhat/ubi9:latest" \
-            packer/rhel
-          echo "✅ RHEL Packer configuration is valid"
+
+          echo "🧩 Running Packer validate..."
+          packer validate -var "image_name=rhel-9-cis1.5-hardening-$(date +%Y%m%d)" packer/rhel
+
 
       - name: 🏗️ Build hardened RHEL image
         run: |
