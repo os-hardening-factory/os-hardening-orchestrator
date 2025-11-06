@@ -1,41 +1,34 @@
 packer {
+  required_version = ">= 1.11.0"
   required_plugins {
-    docker = { version = ">=1.0.8", source = "github.com/hashicorp/docker" }
-    ansible = { version = ">=1.1.0", source = "github.com/hashicorp/ansible" }
+    docker  = { version = ">= 1.1.2", source = "github.com/hashicorp/docker" }
+    ansible = { version = ">= 1.1.4", source = "github.com/hashicorp/ansible" }
   }
 }
 
 source "docker" "ubuntu" {
-  image  = "ubuntu:latest"
+  image  = var.base_image
   commit = true
 }
 
 build {
-  name    = "ubuntu-hardened"
+  name    = var.image_name
   sources = ["source.docker.ubuntu"]
 
-  # Ensure Ansible prerequisites exist inside the container
   provisioner "shell" {
     inline = [
-      "apt-get update",
-      "DEBIAN_FRONTEND=noninteractive apt-get install -y python3 sudo",
-      "ln -sf /usr/bin/python3 /usr/bin/python || true"
+      "apt-get update -y",
+      "apt-get install -y python3 python3-apt git curl openssh-client",
+      "rm -rf /var/lib/apt/lists/*"
     ]
   }
 
-  provisioner "ansible" {
-    playbook_file    = "./packer/ubuntu/ansible/playbook.yml"
-    extra_arguments  = ["-e", "ansible_python_interpreter=/usr/bin/python3"]
+  provisioner "ansible-local" {
+    playbook_file = var.ansible_playbook
   }
 
   post-processor "docker-tag" {
-    repository = "661539128717.dkr.ecr.ap-south-1.amazonaws.com/hardened-ubuntu"
+    repository = var.image_name
     tags       = [var.local_tag]
   }
-}
-
-variable "local_tag" {
-  type        = string
-  description = "Tag for the hardened image version"
-  default     = "latest"
 }
