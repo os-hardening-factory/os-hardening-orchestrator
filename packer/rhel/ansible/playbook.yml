@@ -1,0 +1,6 @@
+---
+- name: Harden rhel
+  hosts: all
+  become: yes
+  roles:
+    - cis_baseline

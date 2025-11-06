@@ -1,0 +1,67 @@
+name: Build & Harden OS Images
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'packer/**'
+
+jobs:
+  build-and-harden:
+    name: Build Hardened OS Images
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        os_type: [amazonlinux, ubuntu, rhel]
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      AWS_REGION: ap-south-1
+      METADATA_BUCKET: cloud-secure-infra-dev-image-metadata
+      GLUE_CRAWLER_NAME: cloud-secure-infra-dev-compliance-crawler
+      ACCOUNT_ID: 661539128717
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.ACCOUNT_ID }}:role/GitHubActionsOSHardeningRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Packer
+        uses: hashicorp/setup-packer@v2
+        with:
+          packer_version: latest
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ansible python3-boto3 jq
+
+      - name: Initialize and build hardened image
+        run: |
+          packer init packer/${{ matrix.os_type }}
+          packer build -var "local_tag=${{ matrix.os_type }}-hardened:$(date +%Y%m%d%H%M)" packer/${{ matrix.os_type }}
+
+      - name: Generate sample compliance reports
+        run: |
+          mkdir -p reports
+          echo '{"meta":{"os":"${{ matrix.os_type }}"},"cis":{"status":"PASS"},"trivy":{"critical":0,"high":2},"sbom":{"packages":10}}' > reports/compliance_report.json
+          echo '{"scan":"trivy","summary":{"critical":0,"high":2}}' > reports/trivy.json
+          echo '{"sbom":"generated","components":["openssl","glibc"]}' > reports/sbom.json
+
+      - name: Upload compliance reports to S3 and trigger Glue
+        run: python3 tools/upload_to_s3_and_trigger_glue.py
+        env:
+          METADATA_BUCKET: ${{ env.METADATA_BUCKET }}
+          GLUE_CRAWLER_NAME: ${{ env.GLUE_CRAWLER_NAME }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+          REPORTS_PATH: ./reports
