@@ -37,3 +37,9 @@ variable "image_name" {
   type        = string
   default     = "ubuntu-22.04-cis1.4-hardening-manual"
 }
+
+variable "cis_profile" {
+  type    = string
+  default = "cis1.0"
+  description = "CIS hardening profile applied to this build."
+}
