@@ -27,35 +27,35 @@ jobs:
           role-to-assume: arn:aws:iam::661539128717:role/GitHubActionsFactoryRole
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: 🧠 Debug existing containerd packages
+      - name: 🧠 Inspect preinstalled Docker/containerd
         run: |
-          echo "=== Installed container-related packages ==="
-          dpkg -l | grep -E "docker|containerd" || echo "No containerd/docker packages found"
-
-      - name: 🔧 Install dependencies (no containerd conflicts)
-        run: |
-          set -e
-          echo "🔧 Installing dependencies safely..."
+          echo "=== Checking preinstalled container runtimes ==="
+          dpkg -l | grep -E "docker|containerd" || echo "No preinstalled container packages found"
+          echo "Holding all container runtime packages to prevent conflicts..."
           sudo apt-mark hold docker-ce docker-ce-cli containerd.io containerd || true
-          sudo apt-get update -y
-          sudo apt-get install -y wget curl unzip python3-pip gpg lsb-release jq software-properties-common
-          echo "✅ Base dependencies installed"
 
-      - name: 📦 Install Packer (binary method - conflict-free)
+      - name: 🔧 Install base dependencies (minimal + safe)
         run: |
-          echo "📦 Installing Packer ${PACKER_VERSION} via binary..."
+          echo "🔧 Installing required base dependencies..."
+          sudo apt-get update -y
+          sudo apt-get install -y wget curl unzip python3-pip jq gpg lsb-release software-properties-common
+          echo "✅ Base dependencies installed."
+
+      - name: 📦 Install Packer via binary (no APT)
+        run: |
+          echo "📦 Installing HashiCorp Packer v${PACKER_VERSION} (binary)..."
           curl -fsSL "https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_linux_amd64.zip" -o packer.zip
           sudo unzip -o packer.zip -d /usr/local/bin/
           rm -f packer.zip
           packer version
-          echo "✅ Packer installed successfully via binary"
+          echo "✅ Packer installed successfully without APT."
 
       - name: 🧩 Install required Packer plugins
         run: |
-          echo "📦 Installing Packer plugins..."
+          echo "🧩 Installing Packer plugins..."
           packer plugins install github.com/hashicorp/docker
           packer plugins install github.com/hashicorp/ansible
-          echo "✅ Plugins installed successfully"
+          echo "✅ Plugins installed successfully."
 
       - name: 🔍 Install Trivy scanner
         run: |
@@ -63,14 +63,14 @@ jobs:
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /tmp
           sudo mv /tmp/trivy /usr/local/bin/trivy
           trivy --version
-          echo "✅ Trivy installed successfully"
+          echo "✅ Trivy installed successfully."
 
       - name: 🧩 Initialize and validate Packer
         run: |
-          echo "🧩 Initializing Packer configuration..."
+          echo "🧩 Initializing and validating Packer..."
           packer init packer/ubuntu
           packer validate packer/ubuntu
-          echo "✅ Packer configuration is valid"
+          echo "✅ Packer templates validated successfully."
 
       - name: 🏗️ Build hardened Ubuntu image
         run: |
@@ -82,7 +82,7 @@ jobs:
             -var "image_name=${TAG}" \
             -var "base_image=ubuntu:22.04" \
             packer/ubuntu
-          echo "✅ Image built successfully: ${TAG}:latest"
+          echo "✅ Image build complete: ${TAG}:latest"
 
       - name: 🔍 Scan image using Trivy
         run: |
@@ -90,12 +90,12 @@ jobs:
           TAG="${{ env.OS_NAME }}-${{ env.OS_VERSION }}-cis${{ env.CIS_VERSION }}-hardening-${TIMESTAMP}"
           mkdir -p reports
           trivy image "${TAG}:latest" --format json -o reports/trivy-${TAG}.json --severity HIGH,CRITICAL || true
-          echo "✅ Security scan completed"
+          echo "✅ Trivy scan complete."
 
-      - name: 📊 Upload scan reports as artifacts
+      - name: 📊 Upload scan reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: security-reports
+          name: ubuntu-security-reports
           path: reports/
           retention-days: 30
