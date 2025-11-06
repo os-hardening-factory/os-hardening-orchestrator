@@ -1,39 +1,42 @@
 packer {
+  required_version = ">= 1.11.0"
+
   required_plugins {
-    docker = { version = ">=1.0.8", source = "github.com/hashicorp/docker" }
-    ansible = { version = ">=1.1.0", source = "github.com/hashicorp/ansible" }
+    docker  = { version = ">= 1.1.2", source = "github.com/hashicorp/docker" }
+    ansible = { version = ">= 1.1.4", source = "github.com/hashicorp/ansible" }
   }
 }
 
-source "docker" "amazonlinux" {
-  image  = "amazonlinux:latest"
+# Use official Amazon Linux base image
+source "docker" "al2023" {
+  image  = var.base_image
   commit = true
+  changes = [
+    "LABEL os-hardening=true",
+    "ENV LANG=en_US.UTF-8"
+  ]
 }
 
 build {
-  name    = "amazonlinux-hardened"
-  sources = ["source.docker.amazonlinux"]
+  name    = var.image_name
+  sources = ["source.docker.al2023"]
 
+  # Install Ansible dependencies inside the image
   provisioner "shell" {
     inline = [
-      "which dnf >/dev/null 2>&1 && dnf install -y python3 sudo || yum install -y python3 sudo",
-      "ln -sf /usr/bin/python3 /usr/bin/python || true"
+      "dnf install -y python3 git openssh-clients sudo",
+      "dnf clean all"
     ]
   }
 
-  provisioner "ansible" {
-    playbook_file    = "./packer/amazonlinux/ansible/playbook.yml"
-    extra_arguments  = ["-e", "ansible_python_interpreter=/usr/bin/python3"]
+  # Run local Ansible playbook for CIS hardening
+  provisioner "ansible-local" {
+    playbook_file = var.ansible_playbook
   }
 
+  # Tag and export hardened image
   post-processor "docker-tag" {
-    repository = "661539128717.dkr.ecr.ap-south-1.amazonaws.com/hardened-amazonlinux"
+    repository = var.image_name
     tags       = [var.local_tag]
   }
-}
-
-variable "local_tag" {
-  type        = string
-  description = "Tag for the hardened image version"
-  default     = "latest"
 }
