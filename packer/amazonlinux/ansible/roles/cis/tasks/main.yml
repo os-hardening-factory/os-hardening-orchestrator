@@ -1,6 +1,6 @@
 ---
 - name: Ensure system packages are up-to-date
-  ansible.builtin.dnf:
+  ansible.builtin.yum:
     name: "*"
     state: present
   register: cis_update_result
