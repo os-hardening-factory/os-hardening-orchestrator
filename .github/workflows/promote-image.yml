@@ -1,8 +1,7 @@
-name: 🚀 Promote Hardened Image to Prod (Security Gating + Release Publishing + Asset Upload)
+name: 🚀 Promote Hardened Image to Prod (Security Gating + Signing + Release Publishing)
 
 on:
   workflow_dispatch:
-    types: [manual]
     inputs:
       vendor:
         description: "OS vendor (e.g., ubuntu, rhel, amazonlinux)"
@@ -32,10 +31,12 @@ jobs:
       contents: write
 
     env:
-      AWS_REGION: ap-south-1
+      AWS_REGION: us-east-1
       ACCOUNT_ID: "661539128717"
+      KMS_KEY_ARN: "arn:aws:kms:us-east-1:661539128717:key/e353a400-0c9a-42b4-95b4-d955d8f64fc3"
 
     steps:
+      # ---------- AWS + Checkout ----------
       - name: 🔐 Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -46,8 +47,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: os-hardening-factory/os-hardening-orchestrator
-          fetch-depth: 0  # ensures full git history & .git folder
-
+          fetch-depth: 0
 
       - name: 🧾 Log input parameters
         run: |
@@ -57,14 +57,13 @@ jobs:
           echo "CIS profile   : ${{ github.event.inputs.cis_profile }}"
           echo "Version       : ${{ github.event.inputs.version }}"
 
-      # ---------- Step 1: Trivy installation ----------
+      # ---------- Trivy ----------
       - name: 🔍 Install Trivy
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sh -s -- -b /usr/local/bin
           trivy --version
 
-      # ---------- Step 2: Security Gating ----------
       - name: 🛡️ Security Gate (Trivy CVE check)
         env:
           VENDOR: ${{ github.event.inputs.vendor }}
@@ -78,7 +77,6 @@ jobs:
           IMG="${REPO}:${SOURCE_TAG}"
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REPO}
           docker pull "${IMG}"
-
           mkdir -p reports
           trivy image --timeout 5m --severity ${BLOCK_SEVERITIES} \
             --format json --output "reports/trivy-${VENDOR}-${SOURCE_TAG}.json" "${IMG}" || true
@@ -92,7 +90,7 @@ jobs:
           fi
           echo "✅ Passed security gate"
 
-      # ---------- Step 3: Promotion ----------
+      # ---------- Promote Image ----------
       - name: 🧱 Retag and push image (Prod)
         if: success()
         run: |
@@ -106,46 +104,74 @@ jobs:
           docker push ${REPO}:${DST}
           echo "✅ Promoted ${REPO}:${SRC} → ${REPO}:${DST}"
 
-      - name: 📊 Upload Trivy report
+      # ---------- Cosign Signing ----------
+      - name: 🔑 Install cosign (Sigstore)
+        if: success()
+        run: |
+          COSIGN_VERSION=v2.4.1
+          curl -sSfL https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64 \
+            -o cosign && chmod +x cosign && sudo mv cosign /usr/local/bin/
+          cosign version
+
+      - name: ✍️ Sign image with AWS KMS (cosign)
+        if: success()
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          COSIGN_YES: "true"
+        run: |
+          VENDOR=${{ github.event.inputs.vendor }}
+          DST=${{ github.event.inputs.target_tag }}
+          REPO="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/hardened-${VENDOR}"
+          IMAGE="${REPO}:${DST}"
+          KMS_URI="awskms://${{ env.KMS_KEY_ARN }}"
+          echo "🔏 Signing ${IMAGE} using ${KMS_URI}"
+          cosign sign --key "${KMS_URI}" "${IMAGE}"
+
+      - name: ✅ Verify signature after signing
+        if: success()
+        run: |
+          VENDOR=${{ github.event.inputs.vendor }}
+          DST=${{ github.event.inputs.target_tag }}
+          REPO="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/hardened-${VENDOR}"
+          IMAGE="${REPO}:${DST}"
+          echo "🔍 Verifying signature for ${IMAGE}"
+          cosign verify --key "awskms://${{ env.KMS_KEY_ARN }}" "${IMAGE}" > cosign-verify.json
+          echo "✅ Signature verified successfully."
+
+      - name: 📊 Upload scan + signature artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-${{ github.event.inputs.vendor }}-${{ github.event.inputs.source_tag }}
-          path: reports/
+          name: security-and-signing-reports
+          path: |
+            reports/
+            cosign-verify.json
           retention-days: 30
 
-      # ---------- Step 4: Generate metadata for release ----------
-      - name: 🧾 Generate release metadata and changelog entry
+      # ---------- Metadata + GitHub Release ----------
+      - name: 🧾 Generate release metadata
         id: metadata
         if: success()
         run: |
           DATE=$(date +%Y%m%d)
           COMMIT=$(git rev-parse --short HEAD || echo "manual")
           ECR_IMAGE="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/hardened-${{ github.event.inputs.vendor }}:${{ github.event.inputs.target_tag }}"
-          SUMMARY="Image promoted to prod after passing security validation. CRITICAL/HIGH CVEs = 0."
+          SUMMARY="Image promoted to prod and signed with AWS KMS. CRITICAL/HIGH CVEs = 0."
           echo "DATE=${DATE}" >> $GITHUB_ENV
           echo "COMMIT=${COMMIT}" >> $GITHUB_ENV
           echo "ECR_IMAGE=${ECR_IMAGE}" >> $GITHUB_ENV
           echo "SUMMARY=${SUMMARY}" >> $GITHUB_ENV
 
-      - name: 🐍 Install Python dependencies for GitHub release dispatch
+      - name: 🐍 Install Python dependencies
         run: |
           python3 -m pip install --upgrade pip
           pip install PyGithub
-
 
       - name: 🚀 Dispatch release to vendor repo
         if: success()
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         run: |
-          echo "📂 Current working directory: $(pwd)"
-          echo "🔍 Verifying tools directory..."
-          ls -R tools || (echo "❌ tools directory not found!" && exit 1)
-
-          # Move to correct workspace (ensures relative paths work)
-          cd $GITHUB_WORKSPACE
-
           echo "🧠 Running release dispatch script..."
           python3 tools/dispatch_to_vendor_repos.py \
             --vendor "${{ github.event.inputs.vendor }}" \
@@ -153,37 +179,25 @@ jobs:
             --version "${{ github.event.inputs.version }}" \
             --build_date "${{ env.DATE }}" \
             --summary "${{ env.SUMMARY }}"
-
           echo "✅ Release successfully created in vendor repo"
 
-
-      # ---------- Step 6: Attach Trivy report to GitHub release ----------
-      - name: 📎 Attach Trivy report to vendor release
+      # ---------- Attach Reports ----------
+      - name: 📎 Attach verification report to release
         if: success()
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           VENDOR: ${{ github.event.inputs.vendor }}
         run: |
           RELEASE_TAG="${{ github.event.inputs.version }}-${{ github.event.inputs.cis_profile }}-${{ env.DATE }}"
-          FILE_PATH="reports/trivy-${VENDOR}-${{ github.event.inputs.source_tag }}.json"
           REPO="os-hardening-${VENDOR}"
-
-          echo "🔗 Uploading ${FILE_PATH} to release ${RELEASE_TAG} in ${REPO}..."
-          gh release upload "${RELEASE_TAG}" "${FILE_PATH}" \
+          gh release upload "${RELEASE_TAG}" cosign-verify.json \
             --repo "os-hardening-factory/${REPO}" --clobber
-          echo "✅ Attached Trivy report as release asset"
+          gh release upload "${RELEASE_TAG}" reports/trivy-${VENDOR}-${{ github.event.inputs.source_tag }}.json \
+            --repo "os-hardening-factory/${REPO}" --clobber
+          echo "✅ Uploaded cosign + trivy reports to release"
 
+      # ---------- Summary ----------
       - name: 🧾 Final promotion summary
-        if: success()
-        run: |
-          echo "Promotion Summary:"
-          echo "  Vendor     : ${{ github.event.inputs.vendor }}"
-          echo "  Target Tag : ${{ github.event.inputs.target_tag }}"
-          echo "  ECR Image  : ${{ env.ECR_IMAGE }}"
-          echo "  Release    : ${{ github.event.inputs.version }}-${{ github.event.inputs.cis_profile }}-${{ env.DATE }}"
-          echo "  Attached   : Trivy report asset"
-
-      - name: 🧾 Generate final audit summary
         if: always()
         run: |
           echo "✅ Hardened Image Promotion Summary" > summary.md
@@ -193,12 +207,10 @@ jobs:
           echo "🚀 Target Tag:    ${{ github.event.inputs.target_tag }}" >> summary.md
           echo "🔖 Release:       ${{ github.event.inputs.version }}-${{ github.event.inputs.cis_profile }}-${{ env.DATE }}" >> summary.md
           echo "🛡️  CVE Status:   PASSED (0 CRITICAL / 0 HIGH)" >> summary.md
+          echo "🔏 Signed with:   ${{ env.KMS_KEY_ARN }}" >> summary.md
           echo "📦 ECR Image:     ${{ env.ECR_IMAGE }}" >> summary.md
-          echo "🧾 Report:        trivy-${{ github.event.inputs.vendor }}-${{ github.event.inputs.source_tag }}.json" >> summary.md
           echo "💾 Commit:        ${{ env.COMMIT }}" >> summary.md
           echo "📅 Date:          $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> summary.md
-          echo "" >> summary.md
-          echo "✅ Promotion job completed successfully and release published to vendor repo." >> summary.md
           cat summary.md
 
       - name: 📤 Upload audit summary
@@ -208,6 +220,3 @@ jobs:
           name: audit-summary-${{ github.event.inputs.vendor }}
           path: summary.md
           retention-days: 30
-
-
-
