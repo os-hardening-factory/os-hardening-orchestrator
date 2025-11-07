@@ -1,0 +1,29 @@
+name: 📈 Push Compliance Data to OpenSearch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ap-south-1
+      OPENSEARCH_ENDPOINT: https://search-infraos-dev-wsa2t3ill565rhqbgrw4gmk6zu.ap-south-1.es.amazonaws.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🔐 Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::661539128717:role/GitHubActionsFactoryRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 📦 Install dependencies
+        run: pip3 install boto3 opensearch-py requests-aws4auth
+
+      - name: ☁️ Upload compliance summary to OpenSearch
+        run: |
+          echo "This is a placeholder. We'll link the actual Python ingestion next."
