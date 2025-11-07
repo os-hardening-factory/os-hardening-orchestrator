@@ -224,21 +224,5 @@ jobs:
             --region ${{ env.AWS_REGION }} \
             --os ${{ env.OS_NAME }} \
             --build_date $(date +%Y%m%d)
-  
-      # ✅ Push compliance data to OpenSearch
-      - name: ☁️ Push Compliance Data to OpenSearch
-        env:
-          OPENSEARCH_URL: "https://search-infraos-dev-wsa2t3ill565rhqbgrw4gmk6zu.ap-south-1.es.amazonaws.com"
-          OS_USERNAME: "admin"
-          OS_PASSWORD: "SecurePass#2025!"
-          OS_NAME: "${{ env.OS_NAME }}"
-          OS_VERSION: "${{ env.OS_VERSION }}"
-          CIS_VERSION: "${{ env.CIS_VERSION }}"
-          STATUS: "COMPLIANT"           # You can update dynamically in future
-          CRITICAL_CVES: 0              # Placeholder for Trivy integration
-          HIGH_CVES: 0
-          CIS_SCORE: 85                 # Placeholder, to be computed later
-        run: |
-          echo "🚀 Pushing compliance summary for ${{ env.OS_NAME }} to OpenSearch..."
-          python3 tools/report_to_opensearch.py
+
 
