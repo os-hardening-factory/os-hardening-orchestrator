@@ -2,3 +2,8 @@
 - name: Example CIS hardening for ubuntu
   debug:
     msg: "Applying CIS benchmark controls on ubuntu"
+
+# =====================================================================
+#  Generate and Upload Compliance Report (Ubuntu)
+# =====================================================================
+

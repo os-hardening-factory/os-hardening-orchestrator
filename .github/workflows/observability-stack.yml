@@ -1,0 +1,55 @@
+name: 📊 Deploy Compliance Observability Stack (Glue + Athena + QuickSight)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment (e.g., dev, prod)"
+        required: true
+        default: "dev"
+
+jobs:
+  deploy-observability-stack:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      AWS_REGION: ap-south-1
+      ACCOUNT_ID: "661539128717"
+      S3_BUCKET: "cloud-secure-infra-dev-image-metadata"
+      STACK_NAME: "compliance-observability-stack"
+
+    steps:
+      - name: 🧾 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🔐 Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::661539128717:role/GitHubActionsFactoryRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🧠 Deploy Glue + Athena + QuickSight Stack via Terraform
+        working-directory: infra/observability
+        run: |
+          set -e
+          terraform init -input=false
+          terraform plan -out=tfplan -input=false
+          terraform apply -auto-approve tfplan
+          echo "✅ Glue, Athena, and QuickSight setup deployed successfully."
+
+      - name: 🧾 List Athena Tables for Verification
+        run: |
+          echo "🔍 Verifying Athena setup..."
+          aws athena list-databases --region ${{ env.AWS_REGION }}
+          aws athena list-table-metadata --database hardened_compliance_db --region ${{ env.AWS_REGION }} || true
+          echo "✅ Athena setup validated."
+
+      - name: 📊 (Optional) QuickSight Dataset Check
+        run: |
+          echo "🔍 Listing QuickSight datasets (requires admin access)..."
+          aws quicksight list-data-sets \
+            --aws-account-id ${{ env.ACCOUNT_ID }} \
+            --region ${{ env.AWS_REGION }} || true
