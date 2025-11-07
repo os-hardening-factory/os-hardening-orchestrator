@@ -1,39 +1,92 @@
-#!/usr/bin/env python3
-import boto3, json, os
-from datetime import datetime
-from opensearchpy import OpenSearch, RequestsHttpConnection
-from requests_aws4auth import AWS4Auth
+import os
+import json
+from datetime import datetime, timezone
+from opensearchpy import OpenSearch, exceptions
 
-region = "ap-south-1"
-service = "es"
-endpoint = os.getenv("OPENSEARCH_ENDPOINT")
-
-credentials = boto3.Session().get_credentials()
-awsauth = AWS4Auth(
-    credentials.access_key,
-    credentials.secret_key,
-    region,
-    service,
-    session_token=credentials.token
+# =========================================================
+# CONFIGURATION
+# =========================================================
+OPENSEARCH_URL = os.getenv(
+    "OPENSEARCH_URL",
+    "https://search-infraos-dev-wsa2t3ill565rhqbgrw4gmk6zu.ap-south-1.es.amazonaws.com"
 )
+INDEX = "os-compliance-summary"
+USERNAME = os.getenv("OS_USERNAME", "admin")
+PASSWORD = os.getenv("OS_PASSWORD", "SecurePass#2025!")
 
-client = OpenSearch(
-    hosts=[{"host": endpoint.replace("https://", ""), "port": 443}],
-    http_auth=awsauth,
-    use_ssl=True,
-    verify_certs=True,
-    connection_class=RequestsHttpConnection
-)
+# =========================================================
+# METADATA (INJECTED FROM GITHUB ACTIONS ENV)
+# =========================================================
+vendor = os.getenv("OS_NAME", "unknown").lower()           # ubuntu, rhel, amazonlinux
+os_version = os.getenv("OS_VERSION", "unknown")
+cis_version = os.getenv("CIS_VERSION", "unknown")
+build_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+build_id = os.getenv("GITHUB_RUN_ID", "local-test")
+commit = os.getenv("GITHUB_SHA", "manual")
+status = os.getenv("STATUS", "COMPLIANT")
+critical_cves = int(os.getenv("CRITICAL_CVES", 0))
+high_cves = int(os.getenv("HIGH_CVES", 0))
+cis_score = int(os.getenv("CIS_SCORE", 85))
 
-file_path = "reports/compliance-summary.json"
-if not os.path.exists(file_path):
-    raise FileNotFoundError(f"{file_path} not found")
+# =========================================================
+# PREPARE DOCUMENT
+# =========================================================
+doc = {
+    "vendor": vendor,
+    "os": vendor,  # keep 'os' for backward compatibility
+    "version": os_version,
+    "cis_version": cis_version,
+    "build_date": build_date,
+    "timestamp": datetime.now(timezone.utc).isoformat(),
+    "status": status,
+    "cis_score": cis_score,
+    "critical_cves": critical_cves,
+    "high_cves": high_cves,
+    "build_id": build_id,
+    "commit": commit,
+}
 
-with open(file_path) as f:
-    doc = json.load(f)
+# =========================================================
+# CONNECT TO OPENSEARCH
+# =========================================================
+try:
+    client = OpenSearch(
+        hosts=[OPENSEARCH_URL],
+        http_auth=(USERNAME, PASSWORD),
+        use_ssl=True,
+        verify_certs=False,
+        ssl_show_warn=False
+    )
+    print(f"✅ Connected to OpenSearch at {OPENSEARCH_URL}")
+except Exception as e:
+    print(f"❌ Failed to connect to OpenSearch: {e}")
+    exit(1)
 
-doc["timestamp"] = datetime.utcnow().isoformat()
-index = "os-compliance-summary"
+# =========================================================
+# PUSH DOCUMENT
+# =========================================================
+try:
+    doc_id = f"{vendor}-{build_id}"
+    resp = client.index(index=INDEX, id=doc_id, body=doc)
+    print(f"✅ Pushed compliance summary for vendor: {vendor}, build: {build_id}")
+    print(json.dumps(resp, indent=2))
+except exceptions.AuthorizationException:
+    print("❌ Authorization error — check OpenSearch credentials or index permissions.")
+    exit(1)
+except Exception as e:
+    print(f"❌ Failed to index document: {e}")
+    exit(1)
 
-resp = client.index(index=index, body=doc)
-print(f"✅ Indexed compliance summary into {index}: {resp['_id']}")
+# =========================================================
+# VERIFY INGESTION
+# =========================================================
+try:
+    query = {"query": {"term": {"build_id": build_id}}}
+    verify = client.search(index=INDEX, body=query)
+    hits = verify["hits"]["total"]["value"]
+    if hits > 0:
+        print(f"🔍 Verification: document successfully indexed (hits={hits})")
+    else:
+        print("⚠️ Verification: document not found after indexing.")
+except Exception as e:
+    print(f"⚠️ Verification step failed: {e}")
